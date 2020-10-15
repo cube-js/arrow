@@ -30,7 +30,7 @@ use crate::error::{DataFusionError, Result};
 use crate::physical_plan::{Accumulator, AggregateExpr};
 use crate::physical_plan::{Distribution, ExecutionPlan, Partitioning, PhysicalExpr};
 
-use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
+use arrow::datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit};
 use arrow::error::{ArrowError, Result as ArrowResult};
 use arrow::record_batch::RecordBatch;
 use arrow::{
@@ -50,6 +50,7 @@ use ahash::RandomState;
 use std::collections::HashMap;
 
 use async_trait::async_trait;
+use arrow::array::TimestampMicrosecondArray;
 
 /// Hash aggregate modes
 #[derive(Debug, Copy, Clone)]
@@ -657,6 +658,7 @@ fn create_batch_from_map(
                     GroupByScalar::UInt32(n) => Arc::new(UInt32Array::from(vec![*n])),
                     GroupByScalar::UInt64(n) => Arc::new(UInt64Array::from(vec![*n])),
                     GroupByScalar::Utf8(str) => Arc::new(StringArray::from(vec![&**str])),
+                    GroupByScalar::TimeMicrosecond(n) => Arc::new(TimestampMicrosecondArray::from(vec![*n])),
                 })
                 .collect::<Vec<ArrayRef>>();
 
@@ -765,10 +767,14 @@ pub(crate) fn create_key(
                 let array = col.as_any().downcast_ref::<StringArray>().unwrap();
                 vec[i] = GroupByScalar::Utf8(String::from(array.value(row)))
             }
-            _ => {
+            DataType::Timestamp(TimeUnit::Microsecond, None) => {
+                let array = col.as_any().downcast_ref::<TimestampMicrosecondArray>().unwrap();
+                vec[i] = GroupByScalar::TimeMicrosecond(array.value(row))
+            }
+            x => {
                 // This is internal because we should have caught this before.
                 return Err(DataFusionError::Internal(
-                    "Unsupported GROUP BY data type".to_string(),
+                    format!("Unsupported GROUP BY data type: {:?}", x),
                 ));
             }
         }

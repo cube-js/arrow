@@ -223,7 +223,7 @@ impl DefaultPhysicalPlanner {
                     .collect::<Result<Vec<_>>>()?;
                 let aggregates = aggr_expr
                     .iter()
-                    .map(|e| self.create_aggregate_expr(e, &input_schema, ctx_state))
+                    .map(|e| self.create_aggregate_expr(e, &input_schema, ctx_state, None))
                     .collect::<Result<Vec<_>>>()?;
 
                 let initial_aggr = Arc::new(HashAggregateExec::try_new(
@@ -546,6 +546,7 @@ impl DefaultPhysicalPlanner {
         e: &Expr,
         input_schema: &Schema,
         ctx_state: &ExecutionContextState,
+        alias: Option<String>
     ) -> Result<Arc<dyn AggregateExpr>> {
         // unpack aliased logical expressions, e.g. "sum(col) as total"
         let (name, e) = match e {
@@ -569,7 +570,7 @@ impl DefaultPhysicalPlanner {
                     *distinct,
                     &args,
                     input_schema,
-                    name,
+                    alias.unwrap_or(name),
                 )
             }
             Expr::AggregateUDF { fun, args, .. } => {
@@ -578,7 +579,7 @@ impl DefaultPhysicalPlanner {
                     .map(|e| self.create_physical_expr(e, input_schema, ctx_state))
                     .collect::<Result<Vec<_>>>()?;
 
-                udaf::create_aggregate_expr(fun, &args, input_schema, name)
+                udaf::create_aggregate_expr(fun, &args, input_schema, alias.unwrap_or(name))
             }
             other => Err(DataFusionError::Internal(format!(
                 "Invalid aggregate expression '{:?}'",
