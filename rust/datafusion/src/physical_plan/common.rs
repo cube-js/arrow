@@ -19,8 +19,9 @@
 
 use std::fs;
 use std::fs::metadata;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
+use super::SendableRecordBatchReader;
 use crate::error::{ExecutionError, Result};
 
 use array::{
@@ -55,39 +56,30 @@ impl RecordBatchIterator {
     }
 }
 
-impl RecordBatchReader for RecordBatchIterator {
-    fn schema(&self) -> SchemaRef {
-        self.schema.clone()
-    }
+impl Iterator for RecordBatchIterator {
+    type Item = ArrowResult<RecordBatch>;
 
-    fn next_batch(&mut self) -> ArrowResult<Option<RecordBatch>> {
+    fn next(&mut self) -> Option<Self::Item> {
         if self.index < self.batches.len() {
             self.index += 1;
-            Ok(Some(self.batches[self.index - 1].as_ref().clone()))
+            Some(Ok(self.batches[self.index - 1].as_ref().clone()))
         } else {
-            Ok(None)
+            None
         }
     }
 }
 
-/// Create a vector of record batches from an iterator
-pub fn collect(
-    it: Arc<Mutex<dyn RecordBatchReader + Send + Sync>>,
-) -> Result<Vec<RecordBatch>> {
-    let mut reader = it.lock().unwrap();
-    let mut results: Vec<RecordBatch> = vec![];
-    loop {
-        match reader.next_batch() {
-            Ok(Some(batch)) => {
-                results.push(batch);
-            }
-            Ok(None) => {
-                // end of result set
-                return Ok(results);
-            }
-            Err(e) => return Err(ExecutionError::from(e)),
-        }
+impl RecordBatchReader for RecordBatchIterator {
+    fn schema(&self) -> SchemaRef {
+        self.schema.clone()
     }
+}
+
+/// Create a vector of record batches from an iterator
+pub fn collect(it: SendableRecordBatchReader) -> Result<Vec<RecordBatch>> {
+    it.into_iter()
+        .collect::<ArrowResult<Vec<_>>>()
+        .map_err(|e| ExecutionError::from(e))
 }
 
 /// Recursively build a list of files in a directory with a given extension

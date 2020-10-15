@@ -559,7 +559,11 @@ impl<'a, S: SchemaProvider> SqlToRel<'a, S> {
                             .collect::<Result<Vec<Expr>>>()?
                     };
 
-                    return Ok(Expr::AggregateFunction { fun, args });
+                    return Ok(Expr::AggregateFunction {
+                        fun,
+                        distinct: function.distinct,
+                        args,
+                    });
                 };
 
                 // finally, user-defined functions (UDF) and UDAF
@@ -611,7 +615,7 @@ impl<'a, S: SchemaProvider> SqlToRel<'a, S> {
 fn is_aggregate_expr(e: &Expr) -> bool {
     match e {
         Expr::AggregateFunction { .. } | Expr::AggregateUDF { .. } => true,
-        Expr::Alias(inner, _) => is_aggregate_expr(inner),
+        Expr::Alias(expr, _) => is_aggregate_expr(expr),
         _ => false,
     }
 }

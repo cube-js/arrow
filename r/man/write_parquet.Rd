@@ -7,7 +7,6 @@
 write_parquet(
   x,
   sink,
-  filesystem = NULL,
   chunk_size = NULL,
   version = NULL,
   compression = default_parquet_compression(),
@@ -23,10 +22,8 @@ write_parquet(
 \arguments{
 \item{x}{\code{data.frame}, \link{RecordBatch}, or \link{Table}}
 
-\item{sink}{A string file path, URI, or \link{OutputStream}}
-
-\item{filesystem}{A \link{FileSystem} where \code{sink} should be written if it is a
-string file path; default is the local file system}
+\item{sink}{A string file path, URI, or \link{OutputStream}, or path in a file
+system (\code{SubTreeFileSystem})}
 
 \item{chunk_size}{chunk size in number of rows. If NULL, the total number of rows is used.}
 
@@ -61,6 +58,12 @@ the input \code{x} invisibly.
 This function enables you to write Parquet files from R.
 }
 \details{
+Due to features of the format, Parquet files cannot be appended to.
+If you want to use the Parquet format but also want the ability to extend
+your dataset, you can write to additional Parquet files and then treat
+the whole directory of files as a \link{Dataset} you can query.
+See \code{vignette("dataset", package = "arrow")} for examples of this.
+
 The parameters \code{compression}, \code{compression_level}, \code{use_dictionary} and
 \code{write_statistics} support various patterns:
 \itemize{

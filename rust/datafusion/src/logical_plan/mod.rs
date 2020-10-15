@@ -22,7 +22,7 @@
 //! physical query plans and executed.
 
 use fmt::Debug;
-use std::{any::Any, collections::HashSet, fmt, sync::Arc};
+use std::{any::Any, collections::HashMap, collections::HashSet, fmt, sync::Arc};
 
 use aggregates::{AccumulatorFunctionImplementation, StateTypeFunction};
 use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
@@ -50,6 +50,7 @@ pub use operators::Operator;
 
 fn create_function_name(
     fun: &String,
+    distinct: bool,
     args: &[Expr],
     input_schema: &Schema,
 ) -> Result<String> {
@@ -57,7 +58,11 @@ fn create_function_name(
         .iter()
         .map(|e| create_name(e, input_schema))
         .collect::<Result<_>>()?;
-    Ok(format!("{}({})", fun, names.join(",")))
+    let distinct_str = match distinct {
+        true => "DISTINCT ",
+        false => "",
+    };
+    Ok(format!("{}({}{})", fun, distinct_str, names.join(",")))
 }
 
 /// Returns a readable name of an expression based on the input schema.
@@ -90,14 +95,17 @@ fn create_name(e: &Expr, input_schema: &Schema) -> Result<String> {
             Ok(format!("{} IS NOT NULL", expr))
         }
         Expr::ScalarFunction { fun, args, .. } => {
-            create_function_name(&fun.to_string(), args, input_schema)
+            create_function_name(&fun.to_string(), false, args, input_schema)
         }
         Expr::ScalarUDF { fun, args, .. } => {
-            create_function_name(&fun.name, args, input_schema)
+            create_function_name(&fun.name, false, args, input_schema)
         }
-        Expr::AggregateFunction { fun, args, .. } => {
-            create_function_name(&fun.to_string(), args, input_schema)
-        }
+        Expr::AggregateFunction {
+            fun,
+            distinct,
+            args,
+            ..
+        } => create_function_name(&fun.to_string(), *distinct, args, input_schema),
         Expr::AggregateUDF { fun, args } => {
             let mut names = Vec::with_capacity(args.len());
             for e in args {
@@ -195,6 +203,8 @@ pub enum Expr {
         fun: aggregates::AggregateFunction,
         /// List of expressions to feed to the functions as arguments
         args: Vec<Expr>,
+        /// Whether this is a DISTINCT aggregation or not
+        distinct: bool,
     },
     /// aggregate function
     AggregateUDF {
@@ -447,6 +457,7 @@ pub fn col(name: &str) -> Expr {
 pub fn min(expr: Expr) -> Expr {
     Expr::AggregateFunction {
         fun: aggregates::AggregateFunction::Min,
+        distinct: false,
         args: vec![expr],
     }
 }
@@ -455,6 +466,7 @@ pub fn min(expr: Expr) -> Expr {
 pub fn max(expr: Expr) -> Expr {
     Expr::AggregateFunction {
         fun: aggregates::AggregateFunction::Max,
+        distinct: false,
         args: vec![expr],
     }
 }
@@ -463,6 +475,7 @@ pub fn max(expr: Expr) -> Expr {
 pub fn sum(expr: Expr) -> Expr {
     Expr::AggregateFunction {
         fun: aggregates::AggregateFunction::Sum,
+        distinct: false,
         args: vec![expr],
     }
 }
@@ -471,6 +484,7 @@ pub fn sum(expr: Expr) -> Expr {
 pub fn avg(expr: Expr) -> Expr {
     Expr::AggregateFunction {
         fun: aggregates::AggregateFunction::Avg,
+        distinct: false,
         args: vec![expr],
     }
 }
@@ -479,6 +493,7 @@ pub fn avg(expr: Expr) -> Expr {
 pub fn count(expr: Expr) -> Expr {
     Expr::AggregateFunction {
         fun: aggregates::AggregateFunction::Count,
+        distinct: false,
         args: vec![expr],
     }
 }
@@ -620,9 +635,18 @@ pub fn create_udaf(
     )
 }
 
-fn fmt_function(f: &mut fmt::Formatter, fun: &String, args: &Vec<Expr>) -> fmt::Result {
+fn fmt_function(
+    f: &mut fmt::Formatter,
+    fun: &String,
+    distinct: bool,
+    args: &Vec<Expr>,
+) -> fmt::Result {
     let args: Vec<String> = args.iter().map(|arg| format!("{:?}", arg)).collect();
-    write!(f, "{}({})", fun, args.join(", "))
+    let distinct_str = match distinct {
+        true => "DISTINCT ",
+        false => "",
+    };
+    write!(f, "{}({}{})", fun, distinct_str, args.join(", "))
 }
 
 impl fmt::Debug for Expr {
@@ -658,13 +682,20 @@ impl fmt::Debug for Expr {
                 }
             }
             Expr::ScalarFunction { fun, args, .. } => {
-                fmt_function(f, &fun.to_string(), args)
+                fmt_function(f, &fun.to_string(), false, args)
             }
-            Expr::ScalarUDF { fun, ref args, .. } => fmt_function(f, &fun.name, args),
-            Expr::AggregateFunction { fun, ref args, .. } => {
-                fmt_function(f, &fun.to_string(), args)
+            Expr::ScalarUDF { fun, ref args, .. } => {
+                fmt_function(f, &fun.name, false, args)
             }
-            Expr::AggregateUDF { fun, ref args, .. } => fmt_function(f, &fun.name, args),
+            Expr::AggregateFunction {
+                fun,
+                distinct,
+                ref args,
+                ..
+            } => fmt_function(f, &fun.to_string(), *distinct, args),
+            Expr::AggregateUDF { fun, ref args, .. } => {
+                fmt_function(f, &fun.name, false, args)
+            }
             Expr::Wildcard => write!(f, "*"),
             Expr::Nested(expr) => write!(f, "({:?})", expr),
         }
@@ -1129,7 +1160,12 @@ impl LogicalPlanBuilder {
         }))
     }
 
-    /// Apply a projection
+    /// Apply a projection.
+    ///
+    /// # Errors
+    /// This function errors under any of the following conditions:
+    /// * Two or more expressions have the same name
+    /// * An invalid expression is used (e.g. a `sort` expression)
     pub fn project(&self, expr: Vec<Expr>) -> Result<Self> {
         let input_schema = self.plan.schema();
         let mut projected_expr = vec![];
@@ -1140,6 +1176,8 @@ impl LogicalPlanBuilder {
             }
             _ => projected_expr.push(expr[i].clone()),
         });
+
+        validate_unique_names("Projections", &projected_expr, input_schema)?;
 
         let schema = Schema::new(exprlist_to_fields(&projected_expr, input_schema)?);
 
@@ -1179,6 +1217,8 @@ impl LogicalPlanBuilder {
         let mut all_expr: Vec<Expr> = group_expr.clone();
         aggr_expr.iter().for_each(|x| all_expr.push(x.clone()));
 
+        validate_unique_names("Aggregations", &all_expr, self.plan.schema())?;
+
         let aggr_schema = Schema::new(exprlist_to_fields(&all_expr, self.plan.schema())?);
 
         Ok(Self::from(&LogicalPlan::Aggregate {
@@ -1210,6 +1250,33 @@ impl LogicalPlanBuilder {
     pub fn build(&self) -> Result<LogicalPlan> {
         Ok(self.plan.clone())
     }
+}
+
+/// Errors if one or more expressions have equal names.
+fn validate_unique_names(
+    node_name: &str,
+    expressions: &[Expr],
+    input_schema: &Schema,
+) -> Result<()> {
+    let mut unique_names = HashMap::new();
+    expressions.iter().enumerate().map(|(position, expr)| {
+        let name = expr.name(input_schema)?;
+        match unique_names.get(&name) {
+            None => {
+                unique_names.insert(name, (position, expr));
+                Ok(())
+            },
+            Some((existing_position, existing_expr)) => {
+                Err(ExecutionError::General(
+                    format!("{} require unique expression names \
+                             but the expression \"{:?}\" at position {} and \"{:?}\" \
+                             at position {} have the same name. Consider aliasing (\"AS\") one of them.",
+                             node_name, existing_expr, existing_position, expr, position,
+                            )
+                ))
+            }
+        }
+    }).collect::<Result<()>>()
 }
 
 /// Represents which type of plan
@@ -1334,7 +1401,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn plan_builder_sort() -> Result<()> {
         let plan = LogicalPlanBuilder::scan(
             "default",
@@ -1362,6 +1428,54 @@ mod tests {
         assert_eq!(expected, format!("{:?}", plan));
 
         Ok(())
+    }
+
+    #[test]
+    fn projection_non_unique_names() -> Result<()> {
+        let plan = LogicalPlanBuilder::scan(
+            "default",
+            "employee.csv",
+            &employee_schema(),
+            Some(vec![0, 3]),
+        )?
+        // two columns with the same name => error
+        .project(vec![col("id"), col("first_name").alias("id")]);
+
+        match plan {
+            Err(ExecutionError::General(e)) => {
+                assert_eq!(e, "Projections require unique expression names \
+                    but the expression \"#id\" at position 0 and \"#first_name AS id\" at \
+                    position 1 have the same name. Consider aliasing (\"AS\") one of them.");
+                Ok(())
+            }
+            _ => Err(ExecutionError::General(
+                "Plan should have returned an ExecutionError::General".to_string(),
+            )),
+        }
+    }
+
+    #[test]
+    fn aggregate_non_unique_names() -> Result<()> {
+        let plan = LogicalPlanBuilder::scan(
+            "default",
+            "employee.csv",
+            &employee_schema(),
+            Some(vec![0, 3]),
+        )?
+        // two columns with the same name => error
+        .aggregate(vec![col("state")], vec![sum(col("salary")).alias("state")]);
+
+        match plan {
+            Err(ExecutionError::General(e)) => {
+                assert_eq!(e, "Aggregations require unique expression names \
+                    but the expression \"#state\" at position 0 and \"SUM(#salary) AS state\" at \
+                    position 1 have the same name. Consider aliasing (\"AS\") one of them.");
+                Ok(())
+            }
+            _ => Err(ExecutionError::General(
+                "Plan should have returned an ExecutionError::General".to_string(),
+            )),
+        }
     }
 
     fn employee_schema() -> Schema {

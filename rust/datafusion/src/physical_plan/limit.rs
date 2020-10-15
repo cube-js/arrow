@@ -18,7 +18,7 @@
 //! Defines the LIMIT plan
 
 use std::any::Any;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use crate::error::{ExecutionError, Result};
 use crate::physical_plan::memory::MemoryIterator;
@@ -26,7 +26,11 @@ use crate::physical_plan::{Distribution, ExecutionPlan, Partitioning};
 use arrow::array::ArrayRef;
 use arrow::compute::limit;
 use arrow::datatypes::SchemaRef;
-use arrow::record_batch::{RecordBatch, RecordBatchReader};
+use arrow::record_batch::RecordBatch;
+
+use super::SendableRecordBatchReader;
+
+use async_trait::async_trait;
 
 /// Limit execution plan
 #[derive(Debug)]
@@ -50,6 +54,7 @@ impl GlobalLimitExec {
     }
 }
 
+#[async_trait]
 impl ExecutionPlan for GlobalLimitExec {
     /// Return a reference to Any that can be used for downcasting
     fn as_any(&self) -> &dyn Any {
@@ -89,10 +94,7 @@ impl ExecutionPlan for GlobalLimitExec {
         }
     }
 
-    fn execute(
-        &self,
-        partition: usize,
-    ) -> Result<Arc<Mutex<dyn RecordBatchReader + Send + Sync>>> {
+    async fn execute(&self, partition: usize) -> Result<SendableRecordBatchReader> {
         // GlobalLimitExec has a single output partition
         if 0 != partition {
             return Err(ExecutionError::General(format!(
@@ -108,12 +110,12 @@ impl ExecutionPlan for GlobalLimitExec {
             ));
         }
 
-        let it = self.input.execute(0)?;
-        Ok(Arc::new(Mutex::new(MemoryIterator::try_new(
-            collect_with_limit(it, self.limit)?,
+        let mut it = self.input.execute(0).await?;
+        Ok(Box::new(MemoryIterator::try_new(
+            collect_with_limit(&mut it, self.limit)?,
             self.input.schema(),
             None,
-        )?)))
+        )?))
     }
 }
 
@@ -131,6 +133,7 @@ impl LocalLimitExec {
     }
 }
 
+#[async_trait]
 impl ExecutionPlan for LocalLimitExec {
     /// Return a reference to Any that can be used for downcasting
     fn as_any(&self) -> &dyn Any {
@@ -164,16 +167,13 @@ impl ExecutionPlan for LocalLimitExec {
         }
     }
 
-    fn execute(
-        &self,
-        partition: usize,
-    ) -> Result<Arc<Mutex<dyn RecordBatchReader + Send + Sync>>> {
-        let it = self.input.execute(partition)?;
-        Ok(Arc::new(Mutex::new(MemoryIterator::try_new(
-            collect_with_limit(it, self.limit)?,
+    async fn execute(&self, _: usize) -> Result<SendableRecordBatchReader> {
+        let mut it = self.input.execute(0).await?;
+        Ok(Box::new(MemoryIterator::try_new(
+            collect_with_limit(&mut it, self.limit)?,
             self.input.schema(),
             None,
-        )?)))
+        )?))
     }
 }
 
@@ -191,15 +191,14 @@ pub fn truncate_batch(batch: &RecordBatch, n: usize) -> Result<RecordBatch> {
 
 /// Create a vector of record batches from an iterator
 fn collect_with_limit(
-    reader: Arc<Mutex<dyn RecordBatchReader + Send + Sync>>,
+    reader: &mut SendableRecordBatchReader,
     limit: usize,
 ) -> Result<Vec<RecordBatch>> {
     let mut count = 0;
-    let mut reader = reader.lock().unwrap();
     let mut results: Vec<RecordBatch> = vec![];
     loop {
-        match reader.next_batch() {
-            Ok(Some(batch)) => {
+        match reader.as_mut().next() {
+            Some(Ok(batch)) => {
                 let capacity = limit - count;
                 if batch.num_rows() <= capacity {
                     count += batch.num_rows();
@@ -213,11 +212,10 @@ fn collect_with_limit(
                     return Ok(results);
                 }
             }
-            Ok(None) => {
-                // end of result set
+            None => {
                 return Ok(results);
             }
-            Err(e) => return Err(ExecutionError::from(e)),
+            Some(Err(e)) => return Err(ExecutionError::from(e)),
         }
     }
 }
@@ -231,8 +229,8 @@ mod tests {
     use crate::physical_plan::merge::MergeExec;
     use crate::test;
 
-    #[test]
-    fn limit() -> Result<()> {
+    #[tokio::test]
+    async fn limit() -> Result<()> {
         let schema = test::aggr_test_schema();
 
         let num_partitions = 4;
@@ -245,11 +243,10 @@ mod tests {
         // input should have 4 partitions
         assert_eq!(csv.output_partitioning().partition_count(), num_partitions);
 
-        let limit =
-            GlobalLimitExec::new(Arc::new(MergeExec::new(Arc::new(csv), 2)), 7, 2);
+        let limit = GlobalLimitExec::new(Arc::new(MergeExec::new(Arc::new(csv))), 7, 2);
 
         // the result should contain 4 batches (one per input partition)
-        let iter = limit.execute(0)?;
+        let iter = limit.execute(0).await?;
         let batches = common::collect(iter)?;
 
         // there should be a total of 100 rows

@@ -59,7 +59,6 @@
 //!
 
 use arrow::{
-    array::StringBuilder,
     array::{Int64Array, PrimitiveArrayOps, StringArray},
     datatypes::SchemaRef,
     error::ArrowError,
@@ -79,28 +78,25 @@ use datafusion::{
     prelude::{ExecutionConfig, ExecutionContext},
 };
 use fmt::Debug;
-use std::{
-    any::Any,
-    collections::BTreeMap,
-    fmt,
-    sync::{Arc, Mutex},
-};
+use std::{any::Any, collections::BTreeMap, fmt, sync::Arc};
+
+use async_trait::async_trait;
 
 /// Execute the specified sql and return the resulting record batches
 /// pretty printed as a String.
-fn exec_sql(ctx: &mut ExecutionContext, sql: &str) -> Result<String> {
+async fn exec_sql(ctx: &mut ExecutionContext, sql: &str) -> Result<String> {
     let df = ctx.sql(sql)?;
-    let batches = df.collect()?;
+    let batches = df.collect().await?;
     pretty_format_batches(&batches).map_err(|e| ExecutionError::ArrowError(e))
 }
 
 /// Create a test table.
-fn setup_table(mut ctx: ExecutionContext) -> Result<ExecutionContext> {
+async fn setup_table(mut ctx: ExecutionContext) -> Result<ExecutionContext> {
     let sql = "CREATE EXTERNAL TABLE sales(customer_id VARCHAR, revenue BIGINT) STORED AS CSV location 'tests/customer.csv'";
 
     let expected = vec!["++", "++"];
 
-    let s = exec_sql(&mut ctx, sql)?;
+    let s = exec_sql(&mut ctx, sql).await?;
     let actual = s.lines().collect::<Vec<_>>();
 
     assert_eq!(expected, actual, "Creating table");
@@ -112,7 +108,10 @@ const QUERY: &str =
 
 // Run the query using the specified execution context and compare it
 // to the known result
-fn run_and_compare_query(mut ctx: ExecutionContext, description: &str) -> Result<()> {
+async fn run_and_compare_query(
+    mut ctx: ExecutionContext,
+    description: &str,
+) -> Result<()> {
     let expected = vec![
         "+-------------+---------+",
         "| customer_id | revenue |",
@@ -123,7 +122,7 @@ fn run_and_compare_query(mut ctx: ExecutionContext, description: &str) -> Result
         "+-------------+---------+",
     ];
 
-    let s = exec_sql(&mut ctx, QUERY)?;
+    let s = exec_sql(&mut ctx, QUERY).await?;
     let actual = s.lines().collect::<Vec<_>>();
 
     assert_eq!(
@@ -137,25 +136,25 @@ fn run_and_compare_query(mut ctx: ExecutionContext, description: &str) -> Result
     Ok(())
 }
 
-#[test]
+#[tokio::test]
 // Run the query using default planners and optimizer
-fn normal_query() -> Result<()> {
-    let ctx = setup_table(ExecutionContext::new())?;
-    run_and_compare_query(ctx, "Default context")
+async fn normal_query() -> Result<()> {
+    let ctx = setup_table(ExecutionContext::new()).await?;
+    run_and_compare_query(ctx, "Default context").await
 }
 
-#[test]
+#[tokio::test]
 // Run the query using topk optimization
-fn topk_query() -> Result<()> {
+async fn topk_query() -> Result<()> {
     // Note the only difference is that the top
-    let ctx = setup_table(make_topk_context())?;
-    run_and_compare_query(ctx, "Topk context")
+    let ctx = setup_table(make_topk_context()).await?;
+    run_and_compare_query(ctx, "Topk context").await
 }
 
-#[test]
+#[tokio::test]
 // Run EXPLAIN PLAN and show the plan was in fact rewritten
-fn topk_plan() -> Result<()> {
-    let mut ctx = setup_table(make_topk_context())?;
+async fn topk_plan() -> Result<()> {
+    let mut ctx = setup_table(make_topk_context()).await?;
 
     let expected = vec![
         "| logical_plan after topk                 | TopK: k=3                                      |",
@@ -164,7 +163,7 @@ fn topk_plan() -> Result<()> {
     ].join("\n");
 
     let explain_query = format!("EXPLAIN VERBOSE {}", QUERY);
-    let actual_output = exec_sql(&mut ctx, &explain_query)?;
+    let actual_output = exec_sql(&mut ctx, &explain_query).await?;
 
     // normalize newlines (output on windows uses \r\n)
     let actual_output = actual_output.replace("\r\n", "\n");
@@ -354,6 +353,7 @@ impl Debug for TopKExec {
     }
 }
 
+#[async_trait]
 impl ExecutionPlan for TopKExec {
     /// Return a reference to Any that can be used for downcasting
     fn as_any(&self) -> &dyn Any {
@@ -392,10 +392,10 @@ impl ExecutionPlan for TopKExec {
     }
 
     /// Execute one partition and return an iterator over RecordBatch
-    fn execute(
+    async fn execute(
         &self,
         partition: usize,
-    ) -> Result<Arc<Mutex<dyn RecordBatchReader + Send + Sync>>> {
+    ) -> Result<Box<dyn RecordBatchReader + Send>> {
         if 0 != partition {
             return Err(ExecutionError::General(format!(
                 "TopKExec invalid partition {}",
@@ -403,114 +403,117 @@ impl ExecutionPlan for TopKExec {
             )));
         }
 
-        Ok(Arc::new(Mutex::new(TopKReader {
-            input: self.input.execute(partition)?,
+        Ok(Box::new(TopKReader {
+            input: self.input.execute(partition).await?,
             k: self.k,
-            top_values: BTreeMap::new(),
             done: false,
-        })))
+        }))
     }
 }
 
 // A very specialized TopK implementation
 struct TopKReader {
     /// The input to read data from
-    input: Arc<Mutex<dyn RecordBatchReader + Send + Sync>>,
+    input: Box<dyn RecordBatchReader + Send>,
     /// Maximum number of output values
     k: usize,
-    /// Hard coded implementation for sales / customer_id example
-    top_values: BTreeMap<i64, String>,
     /// Have we produced the output yet?
     done: bool,
 }
 
-impl TopKReader {
-    /// Keeps track of the revenue from customer_id and stores if it
-    /// is the top values we have seen so far.
-    fn add_row(&mut self, customer_id: &str, revenue: i64) {
-        self.top_values.insert(revenue, customer_id.into());
-        // only keep top k
-        while self.top_values.len() > self.k {
-            self.remove_lowest_value()
-        }
+/// Keeps track of the revenue from customer_id and stores if it
+/// is the top values we have seen so far.
+fn add_row(
+    top_values: &mut BTreeMap<i64, String>,
+    customer_id: &str,
+    revenue: i64,
+    k: &usize,
+) {
+    top_values.insert(revenue, customer_id.into());
+    // only keep top k
+    while top_values.len() > *k {
+        remove_lowest_value(top_values)
     }
+}
 
-    fn remove_lowest_value(&mut self) {
-        if !self.top_values.is_empty() {
-            let smallest_revenue = {
-                let (revenue, _) = self.top_values.iter().next().unwrap();
-                *revenue
-            };
-            self.top_values.remove(&smallest_revenue);
+fn remove_lowest_value(top_values: &mut BTreeMap<i64, String>) {
+    if !top_values.is_empty() {
+        let smallest_revenue = {
+            let (revenue, _) = top_values.iter().next().unwrap();
+            *revenue
+        };
+        top_values.remove(&smallest_revenue);
+    }
+}
+
+fn accumulate_batch(
+    input_batch: &RecordBatch,
+    top_values: &mut BTreeMap<i64, String>,
+    k: &usize,
+) -> Result<()> {
+    let num_rows = input_batch.num_rows();
+    // Assuming the input columns are
+    // column[0]: customer_id / UTF8
+    // column[1]: revenue: Int64
+    let customer_id = input_batch
+        .column(0)
+        .as_any()
+        .downcast_ref::<StringArray>()
+        .expect("Column 0 is not customer_id");
+
+    let revenue = input_batch
+        .column(1)
+        .as_any()
+        .downcast_ref::<Int64Array>()
+        .expect("Column 1 is not revenue");
+
+    for row in 0..num_rows {
+        add_row(top_values, customer_id.value(row), revenue.value(row), k);
+    }
+    Ok(())
+}
+
+impl Iterator for TopKReader {
+    type Item = std::result::Result<RecordBatch, ArrowError>;
+
+    /// Reads the next `RecordBatch`.
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.done {
+            return None;
         }
+
+        // Hard coded implementation for sales / customer_id example
+        let mut top_values: BTreeMap<i64, String> = BTreeMap::new();
+
+        // take this as immutable
+        let k = &self.k;
+
+        self.input
+            .as_mut()
+            .into_iter()
+            .map(|batch| accumulate_batch(&batch?, &mut top_values, k))
+            .collect::<Result<()>>()
+            .unwrap();
+
+        // make output by walking over the map backwards (so values are descending)
+        let (revenue, customer): (Vec<i64>, Vec<&String>) =
+            top_values.iter().rev().unzip();
+
+        let customer: Vec<&str> = customer.iter().map(|&s| &**s).collect();
+
+        self.done = true;
+        Some(RecordBatch::try_new(
+            self.schema().clone(),
+            vec![
+                Arc::new(StringArray::from(customer)),
+                Arc::new(Int64Array::from(revenue)),
+            ],
+        ))
     }
 }
 
 impl RecordBatchReader for TopKReader {
     fn schema(&self) -> SchemaRef {
-        self.input.lock().expect("locked input reader").schema()
-    }
-
-    /// Reads the next `RecordBatch`.
-    fn next_batch(&mut self) -> std::result::Result<Option<RecordBatch>, ArrowError> {
-        if self.done {
-            return Ok(None);
-        }
-
-        // use a loop so that we release the mutex once we have read each input_batch
-        loop {
-            let input_batch = self
-                .input
-                .lock()
-                .expect("locked input mutex")
-                .next_batch()?;
-
-            match input_batch {
-                Some(input_batch) => {
-                    println!("Got an input batch");
-                    let num_rows = input_batch.num_rows();
-
-                    // Assuming the input columns are
-                    // column[0]: customer_id / UTF8
-                    // column[1]: revenue: Int64
-                    let customer_id = input_batch
-                        .column(0)
-                        .as_any()
-                        .downcast_ref::<StringArray>()
-                        .expect("Column 0 is not customer_id");
-
-                    let revenue = input_batch
-                        .column(1)
-                        .as_any()
-                        .downcast_ref::<Int64Array>()
-                        .expect("Column 1 is not revenue");
-
-                    for row in 0..num_rows {
-                        self.add_row(customer_id.value(row), revenue.value(row));
-                    }
-                }
-                None => break,
-            }
-        }
-
-        let mut revenue_builder = Int64Array::builder(self.top_values.len());
-        let mut customer_id_builder = StringBuilder::new(self.top_values.len());
-
-        // make output by walking over the map backwards (so values are descending)
-        for (revenue, customer_id) in self.top_values.iter().rev() {
-            revenue_builder.append_value(*revenue)?;
-            customer_id_builder.append_value(customer_id)?;
-        }
-
-        let record_batch = RecordBatch::try_new(
-            self.schema().clone(),
-            vec![
-                Arc::new(customer_id_builder.finish()),
-                Arc::new(revenue_builder.finish()),
-            ],
-        )?;
-
-        self.done = true;
-        Ok(Some(record_batch))
+        self.input.schema()
     }
 }

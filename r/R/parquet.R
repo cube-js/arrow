@@ -39,10 +39,9 @@ read_parquet <- function(file,
                          col_select = NULL,
                          as_data_frame = TRUE,
                          props = ParquetReaderProperties$create(),
-                         filesystem = NULL,
                          ...) {
   if (is.string(file)) {
-    file <- make_readable_file(file, filesystem = filesystem)
+    file <- make_readable_file(file)
     on.exit(file$close())
   }
   reader <- ParquetFileReader$create(file, props = props, ...)
@@ -70,10 +69,15 @@ read_parquet <- function(file,
 #' [Parquet](https://parquet.apache.org/) is a columnar storage file format.
 #' This function enables you to write Parquet files from R.
 #'
+#' Due to features of the format, Parquet files cannot be appended to.
+#' If you want to use the Parquet format but also want the ability to extend
+#' your dataset, you can write to additional Parquet files and then treat
+#' the whole directory of files as a [Dataset] you can query.
+#' See `vignette("dataset", package = "arrow")` for examples of this.
+#'
 #' @param x `data.frame`, [RecordBatch], or [Table]
-#' @param sink A string file path, URI, or [OutputStream]
-#' @param filesystem A [FileSystem] where `sink` should be written if it is a
-#' string file path; default is the local file system
+#' @param sink A string file path, URI, or [OutputStream], or path in a file
+#' system (`SubTreeFileSystem`)
 #' @param chunk_size chunk size in number of rows. If NULL, the total number of rows is used.
 #' @param version parquet version, "1.0" or "2.0". Default "1.0". Numeric values
 #'   are coerced to character.
@@ -125,7 +129,6 @@ read_parquet <- function(file,
 #' @export
 write_parquet <- function(x,
                           sink,
-                          filesystem = NULL,
                           chunk_size = NULL,
                           # writer properties
                           version = NULL,
@@ -143,11 +146,9 @@ write_parquet <- function(x,
     x <- Table$create(x)
   }
 
-  if (is.string(sink)) {
-    sink <- make_output_stream(sink, filesystem)
+  if (!inherits(sink, "OutputStream")) {
+    sink <- make_output_stream(sink)
     on.exit(sink$close())
-  } else if (!inherits(sink, "OutputStream")) {
-    abort("sink must be a file path or an OutputStream")
   }
 
   writer <- ParquetFileWriter$create(

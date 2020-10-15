@@ -18,13 +18,16 @@
 //! Execution plan for reading in-memory batches of data
 
 use std::any::Any;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use crate::error::{ExecutionError, Result};
 use crate::physical_plan::{ExecutionPlan, Partitioning};
 use arrow::datatypes::SchemaRef;
 use arrow::error::Result as ArrowResult;
 use arrow::record_batch::{RecordBatch, RecordBatchReader};
+
+use super::SendableRecordBatchReader;
+use async_trait::async_trait;
 
 /// Execution plan for reading in-memory batches of data
 #[derive(Debug)]
@@ -37,6 +40,7 @@ pub struct MemoryExec {
     projection: Option<Vec<usize>>,
 }
 
+#[async_trait]
 impl ExecutionPlan for MemoryExec {
     /// Return a reference to Any that can be used for downcasting
     fn as_any(&self) -> &dyn Any {
@@ -68,15 +72,12 @@ impl ExecutionPlan for MemoryExec {
         )))
     }
 
-    fn execute(
-        &self,
-        partition: usize,
-    ) -> Result<Arc<Mutex<dyn RecordBatchReader + Send + Sync>>> {
-        Ok(Arc::new(Mutex::new(MemoryIterator::try_new(
+    async fn execute(&self, partition: usize) -> Result<SendableRecordBatchReader> {
+        Ok(Box::new(MemoryIterator::try_new(
             self.partitions[partition].clone(),
             self.schema.clone(),
             self.projection.clone(),
-        )?)))
+        )?))
     }
 }
 
@@ -123,27 +124,30 @@ impl MemoryIterator {
     }
 }
 
-impl RecordBatchReader for MemoryIterator {
-    /// Get the schema
-    fn schema(&self) -> SchemaRef {
-        self.schema.clone()
-    }
+impl Iterator for MemoryIterator {
+    type Item = ArrowResult<RecordBatch>;
 
-    /// Get the next RecordBatch
-    fn next_batch(&mut self) -> ArrowResult<Option<RecordBatch>> {
+    fn next(&mut self) -> Option<Self::Item> {
         if self.index < self.data.len() {
             self.index += 1;
             let batch = &self.data[self.index - 1];
             // apply projection
             match &self.projection {
-                Some(columns) => Ok(Some(RecordBatch::try_new(
+                Some(columns) => Some(RecordBatch::try_new(
                     self.schema.clone(),
                     columns.iter().map(|i| batch.column(*i).clone()).collect(),
-                )?)),
-                None => Ok(Some(batch.clone())),
+                )),
+                None => Some(Ok(batch.clone())),
             }
         } else {
-            Ok(None)
+            None
         }
+    }
+}
+
+impl RecordBatchReader for MemoryIterator {
+    /// Get the schema
+    fn schema(&self) -> SchemaRef {
+        self.schema.clone()
     }
 }

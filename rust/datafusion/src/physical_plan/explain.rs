@@ -18,20 +18,19 @@
 //! Defines the EXPLAIN operator
 
 use std::any::Any;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use crate::error::{ExecutionError, Result};
 use crate::{
     logical_plan::StringifiedPlan,
     physical_plan::{common::RecordBatchIterator, ExecutionPlan},
 };
-use arrow::{
-    array::StringBuilder,
-    datatypes::SchemaRef,
-    record_batch::{RecordBatch, RecordBatchReader},
-};
+use arrow::{array::StringBuilder, datatypes::SchemaRef, record_batch::RecordBatch};
 
 use crate::physical_plan::Partitioning;
+
+use super::SendableRecordBatchReader;
+use async_trait::async_trait;
 
 /// Explain execution plan operator. This operator contains the string
 /// values of the various plans it has when it is created, and passes
@@ -55,6 +54,7 @@ impl ExplainExec {
     }
 }
 
+#[async_trait]
 impl ExecutionPlan for ExplainExec {
     /// Return a reference to Any that can be used for downcasting
     fn as_any(&self) -> &dyn Any {
@@ -88,10 +88,8 @@ impl ExecutionPlan for ExplainExec {
             )))
         }
     }
-    fn execute(
-        &self,
-        partition: usize,
-    ) -> Result<Arc<Mutex<dyn RecordBatchReader + Send + Sync>>> {
+
+    async fn execute(&self, partition: usize) -> Result<SendableRecordBatchReader> {
         if 0 != partition {
             return Err(ExecutionError::General(format!(
                 "ExplainExec invalid partition {}",
@@ -115,9 +113,9 @@ impl ExecutionPlan for ExplainExec {
             ],
         )?;
 
-        Ok(Arc::new(Mutex::new(RecordBatchIterator::new(
+        Ok(Box::new(RecordBatchIterator::new(
             self.schema.clone(),
             vec![Arc::new(record_batch)],
-        ))))
+        )))
     }
 }

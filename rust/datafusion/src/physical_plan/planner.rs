@@ -117,10 +117,7 @@ impl DefaultPhysicalPlanner {
                             if child.output_partitioning().partition_count() == 1 {
                                 child.clone()
                             } else {
-                                Arc::new(MergeExec::new(
-                                    child.clone(),
-                                    ctx_state.config.concurrency,
-                                ))
+                                Arc::new(MergeExec::new(child.clone()))
                             }
                         })
                         .collect(),
@@ -470,17 +467,29 @@ impl DefaultPhysicalPlanner {
         ctx_state: &ExecutionContextState,
         alias: Option<String>
     ) -> Result<Arc<dyn AggregateExpr>> {
+        // unpack aliased logical expressions, e.g. "sum(col) as total"
+        let (name, e) = match e {
+            Expr::Alias(sub_expr, alias) => (alias.clone(), sub_expr.as_ref()),
+            _ => (e.name(input_schema)?, e),
+        };
+
         match e {
-            Expr::AggregateFunction { fun, args, .. } => {
+            Expr::AggregateFunction {
+                fun,
+                distinct,
+                args,
+                ..
+            } => {
                 let args = args
                     .iter()
                     .map(|e| self.create_physical_expr(e, input_schema, ctx_state))
                     .collect::<Result<Vec<_>>>()?;
                 aggregates::create_aggregate_expr(
                     fun,
+                    *distinct,
                     &args,
                     input_schema,
-                    alias.unwrap_or(e.name(input_schema)?),
+                    name,
                 )
             }
             Expr::AggregateUDF { fun, args, .. } => {
@@ -489,15 +498,7 @@ impl DefaultPhysicalPlanner {
                     .map(|e| self.create_physical_expr(e, input_schema, ctx_state))
                     .collect::<Result<Vec<_>>>()?;
 
-                udaf::create_aggregate_expr(
-                    fun,
-                    &args,
-                    input_schema,
-                    alias.unwrap_or(e.name(input_schema)?),
-                )
-            }
-            Expr::Alias(expr, alias) => {
-                self.create_aggregate_expr(expr.as_ref(), input_schema, ctx_state, Some(alias.to_string()))
+                udaf::create_aggregate_expr(fun, &args, input_schema, name)
             }
             other => Err(ExecutionError::General(format!(
                 "Invalid aggregate expression '{:?}'",
@@ -550,15 +551,16 @@ impl ExtensionPlanner for DefaultExtensionPlanner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::logical_plan::{col, lit, sum, LogicalPlanBuilder};
     use crate::physical_plan::{csv::CsvReadOptions, expressions, Partitioning};
-    use crate::{prelude::ExecutionConfig, test::arrow_testdata_path};
-    use arrow::{
-        datatypes::{DataType, Field, SchemaRef},
-        record_batch::RecordBatchReader,
+    use crate::{
+        logical_plan::{col, lit, sum, LogicalPlanBuilder},
+        physical_plan::SendableRecordBatchReader,
     };
+    use crate::{prelude::ExecutionConfig, test::arrow_testdata_path};
+    use arrow::datatypes::{DataType, Field, SchemaRef};
+    use async_trait::async_trait;
     use fmt::Debug;
-    use std::{any::Any, collections::HashMap, fmt, sync::Mutex};
+    use std::{any::Any, collections::HashMap, fmt};
 
     fn make_ctx_state() -> ExecutionContextState {
         ExecutionContextState {
@@ -777,6 +779,7 @@ mod tests {
         schema: SchemaRef,
     }
 
+    #[async_trait]
     impl ExecutionPlan for NoOpExecutionPlan {
         /// Return a reference to Any that can be used for downcasting
         fn as_any(&self) -> &dyn Any {
@@ -802,11 +805,7 @@ mod tests {
             unimplemented!("NoOpExecutionPlan::with_new_children");
         }
 
-        /// Execute one partition and return an iterator over RecordBatch
-        fn execute(
-            &self,
-            _partition: usize,
-        ) -> Result<Arc<Mutex<dyn RecordBatchReader + Send + Sync>>> {
+        async fn execute(&self, _partition: usize) -> Result<SendableRecordBatchReader> {
             unimplemented!("NoOpExecutionPlan::execute");
         }
     }

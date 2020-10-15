@@ -390,6 +390,8 @@ class Converter_Binary : public Converter {
 
     return IngestSome(array, n, ingest_one);
   }
+
+  virtual bool Parallel() const { return false; }
 };
 
 class Converter_FixedSizeBinary : public Converter {
@@ -428,6 +430,8 @@ class Converter_FixedSizeBinary : public Converter {
 
     return IngestSome(array, n, ingest_one);
   }
+
+  virtual bool Parallel() const { return false; }
 
  private:
   int byte_width_;
@@ -646,6 +650,15 @@ class Converter_Struct : public Converter {
     }
 
     return Status::OK();
+  }
+
+  virtual bool Parallel() const {
+    // this can only run in parallel if all the
+    // inner converters can
+    for (const auto& converter : converters) {
+      if (!converter->Parallel()) return false;
+    }
+    return true;
   }
 
  private:
@@ -950,14 +963,25 @@ class Converter_Null : public Converter {
 };
 
 bool ArraysCanFitInteger(ArrayVector arrays) {
-  bool out = false;
+  bool all_can_fit = true;
   auto i32 = arrow::int32();
   for (const auto& array : arrays) {
-    if (!out) {
-      out = arrow::IntegersCanFit(arrow::Datum(array), *i32).ok();
+    if (all_can_fit) {
+      all_can_fit = arrow::IntegersCanFit(arrow::Datum(array), *i32).ok();
     }
   }
-  return out;
+  return all_can_fit;
+}
+
+bool GetBoolOption(const std::string& name, bool default_) {
+  SEXP getOption = Rf_install("getOption");
+  cpp11::sexp call = Rf_lang2(getOption, Rf_mkString(name.c_str()));
+  cpp11::sexp res = Rf_eval(call, R_BaseEnv);
+  if (TYPEOF(res) == LGLSXP) {
+    return LOGICAL(res)[0] == TRUE;
+  } else {
+    return default_;
+  }
 }
 
 std::shared_ptr<Converter> Converter::Make(const std::shared_ptr<DataType>& type,
@@ -1068,8 +1092,8 @@ std::shared_ptr<Converter> Converter::Make(const std::shared_ptr<DataType>& type
       return std::make_shared<arrow::r::Converter_Timestamp<int64_t>>(std::move(arrays));
 
     case Type::INT64:
-      // Prefer integer if it fits
-      if (ArraysCanFitInteger(arrays)) {
+      // Prefer integer if it fits, unless option arrow.int64_downcast is `false`
+      if (GetBoolOption("arrow.int64_downcast", true) && ArraysCanFitInteger(arrays)) {
         return std::make_shared<arrow::r::Converter_Int<arrow::Int64Type>>(
             std::move(arrays));
       } else {

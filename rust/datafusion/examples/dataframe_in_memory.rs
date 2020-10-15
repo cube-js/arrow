@@ -27,8 +27,9 @@ use datafusion::datasource::MemTable;
 use datafusion::error::Result;
 use datafusion::prelude::*;
 
-/// This example demonstrates basic uses of the Table API on an in-memory table
-fn main() -> Result<()> {
+/// This example demonstrates how to use the DataFrame API against in-memory data.
+#[tokio::main]
+async fn main() -> Result<()> {
     // define a schema.
     let schema = Arc::new(Schema::new(vec![
         Field::new("a", DataType::Utf8, false),
@@ -58,7 +59,7 @@ fn main() -> Result<()> {
     let df = df.select_columns(vec!["a", "b"])?.filter(filter)?;
 
     // execute
-    let results = df.collect()?;
+    let results = df.collect().await?;
 
     // print the results
     pretty::print_batches(&results)?;

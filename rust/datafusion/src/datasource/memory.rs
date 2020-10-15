@@ -22,12 +22,15 @@
 use std::sync::Arc;
 
 use arrow::datatypes::{Field, Schema, SchemaRef};
+use arrow::error::Result as ArrowResult;
 use arrow::record_batch::RecordBatch;
 
 use crate::datasource::TableProvider;
 use crate::error::{ExecutionError, Result};
 use crate::physical_plan::memory::MemoryExec;
 use crate::physical_plan::ExecutionPlan;
+
+use tokio::task::{self, JoinHandle};
 
 /// In-memory table
 pub struct MemTable {
@@ -55,20 +58,27 @@ impl MemTable {
     }
 
     /// Create a mem table by reading from another data source
-    pub fn load(t: &dyn TableProvider) -> Result<Self> {
+    pub async fn load(t: &dyn TableProvider, batch_size: usize) -> Result<Self> {
         let schema = t.schema();
-        let exec = t.scan(&None, 1024 * 1024)?;
+        let exec = t.scan(&None, batch_size)?;
+        let partition_count = exec.output_partitioning().partition_count();
 
-        let mut data: Vec<Vec<RecordBatch>> =
-            Vec::with_capacity(exec.output_partitioning().partition_count());
-        for partition in 0..exec.output_partitioning().partition_count() {
-            let it = exec.execute(partition)?;
-            let mut it = it.lock().unwrap();
-            let mut partition_batches = vec![];
-            while let Ok(Some(batch)) = it.next_batch() {
-                partition_batches.push(batch);
-            }
-            data.push(partition_batches);
+        let mut tasks = Vec::with_capacity(partition_count);
+        for partition in 0..partition_count {
+            let exec = exec.clone();
+            let task: JoinHandle<Result<Vec<RecordBatch>>> = task::spawn(async move {
+                let it = exec.execute(partition).await?;
+                it.into_iter()
+                    .collect::<ArrowResult<Vec<RecordBatch>>>()
+                    .map_err(ExecutionError::from)
+            });
+            tasks.push(task)
+        }
+
+        let mut data: Vec<Vec<RecordBatch>> = Vec::with_capacity(partition_count);
+        for task in tasks {
+            let result = task.await.expect("MemTable::load could not join task")?;
+            data.push(result);
         }
 
         MemTable::new(schema.clone(), data)
@@ -126,8 +136,8 @@ mod tests {
     use arrow::array::Int32Array;
     use arrow::datatypes::{DataType, Field, Schema};
 
-    #[test]
-    fn test_with_projection() -> Result<()> {
+    #[tokio::test]
+    async fn test_with_projection() -> Result<()> {
         let schema = Arc::new(Schema::new(vec![
             Field::new("a", DataType::Int32, false),
             Field::new("b", DataType::Int32, false),
@@ -147,8 +157,8 @@ mod tests {
 
         // scan with projection
         let exec = provider.scan(&Some(vec![2, 1]), 1024)?;
-        let it = exec.execute(0)?;
-        let batch2 = it.lock().expect("mutex lock").next_batch()?.unwrap();
+        let mut it = exec.execute(0).await?;
+        let batch2 = it.next().unwrap()?;
         assert_eq!(2, batch2.schema().fields().len());
         assert_eq!("c", batch2.schema().field(0).name());
         assert_eq!("b", batch2.schema().field(1).name());
@@ -157,8 +167,8 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn test_without_projection() -> Result<()> {
+    #[tokio::test]
+    async fn test_without_projection() -> Result<()> {
         let schema = Arc::new(Schema::new(vec![
             Field::new("a", DataType::Int32, false),
             Field::new("b", DataType::Int32, false),
@@ -177,8 +187,8 @@ mod tests {
         let provider = MemTable::new(schema, vec![vec![batch]])?;
 
         let exec = provider.scan(&None, 1024)?;
-        let it = exec.execute(0)?;
-        let batch1 = it.lock().expect("mutex lock").next_batch()?.unwrap();
+        let mut it = exec.execute(0).await?;
+        let batch1 = it.next().unwrap()?;
         assert_eq!(3, batch1.schema().fields().len());
         assert_eq!(3, batch1.num_columns());
 

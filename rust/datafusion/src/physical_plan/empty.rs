@@ -18,13 +18,16 @@
 //! EmptyRelation execution plan
 
 use std::any::Any;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use crate::error::{ExecutionError, Result};
 use crate::physical_plan::memory::MemoryIterator;
 use crate::physical_plan::{Distribution, ExecutionPlan, Partitioning};
 use arrow::datatypes::SchemaRef;
-use arrow::record_batch::RecordBatchReader;
+
+use super::SendableRecordBatchReader;
+
+use async_trait::async_trait;
 
 /// Execution plan for empty relation (produces no rows)
 #[derive(Debug)]
@@ -39,6 +42,7 @@ impl EmptyExec {
     }
 }
 
+#[async_trait]
 impl ExecutionPlan for EmptyExec {
     /// Return a reference to Any that can be used for downcasting
     fn as_any(&self) -> &dyn Any {
@@ -74,10 +78,7 @@ impl ExecutionPlan for EmptyExec {
         }
     }
 
-    fn execute(
-        &self,
-        partition: usize,
-    ) -> Result<Arc<Mutex<dyn RecordBatchReader + Send + Sync>>> {
+    async fn execute(&self, partition: usize) -> Result<SendableRecordBatchReader> {
         // GlobalLimitExec has a single output partition
         if 0 != partition {
             return Err(ExecutionError::General(format!(
@@ -87,11 +88,11 @@ impl ExecutionPlan for EmptyExec {
         }
 
         let data = vec![];
-        Ok(Arc::new(Mutex::new(MemoryIterator::try_new(
+        Ok(Box::new(MemoryIterator::try_new(
             data,
             self.schema.clone(),
             None,
-        )?)))
+        )?))
     }
 }
 
@@ -101,15 +102,15 @@ mod tests {
     use crate::physical_plan::common;
     use crate::test;
 
-    #[test]
-    fn empty() -> Result<()> {
+    #[tokio::test]
+    async fn empty() -> Result<()> {
         let schema = test::aggr_test_schema();
 
         let empty = EmptyExec::new(schema.clone());
         assert_eq!(empty.schema(), schema);
 
         // we should have no results
-        let iter = empty.execute(0)?;
+        let iter = empty.execute(0).await?;
         let batches = common::collect(iter)?;
         assert!(batches.is_empty());
 
@@ -132,14 +133,14 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn invalid_execute() -> Result<()> {
+    #[tokio::test]
+    async fn invalid_execute() -> Result<()> {
         let schema = test::aggr_test_schema();
         let empty = EmptyExec::new(schema.clone());
 
         // ask for the wrong partition
-        assert!(empty.execute(1).is_err());
-        assert!(empty.execute(20).is_err());
+        assert!(empty.execute(1).await.is_err());
+        assert!(empty.execute(20).await.is_err());
         Ok(())
     }
 }

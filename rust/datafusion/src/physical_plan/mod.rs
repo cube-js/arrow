@@ -18,10 +18,8 @@
 //! Traits for physical query plan, supporting parallel execution for partitioned relations.
 
 use std::any::Any;
-use std::cell::RefCell;
 use std::fmt::{Debug, Display};
-use std::rc::Rc;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use crate::execution::context::ExecutionContextState;
 use crate::logical_plan::LogicalPlan;
@@ -29,6 +27,9 @@ use crate::{error::Result, scalar::ScalarValue};
 use arrow::datatypes::{DataType, Schema, SchemaRef};
 use arrow::record_batch::{RecordBatch, RecordBatchReader};
 use arrow::{array::ArrayRef, datatypes::Field};
+
+use async_trait::async_trait;
+type SendableRecordBatchReader = Box<dyn RecordBatchReader + Send>;
 
 /// Physical query planner that converts a `LogicalPlan` to an
 /// `ExecutionPlan` suitable for execution.
@@ -42,6 +43,7 @@ pub trait PhysicalPlanner {
 }
 
 /// Partition-aware execution plan for a relation
+#[async_trait]
 pub trait ExecutionPlan: Debug + Send + Sync {
     /// Returns the execution plan as [`Any`](std::any::Any) so that it can be
     /// downcast to a specific implementation.
@@ -64,11 +66,9 @@ pub trait ExecutionPlan: Debug + Send + Sync {
         &self,
         children: Vec<Arc<dyn ExecutionPlan>>,
     ) -> Result<Arc<dyn ExecutionPlan>>;
-    /// Execute one partition and return an iterator over RecordBatch
-    fn execute(
-        &self,
-        partition: usize,
-    ) -> Result<Arc<Mutex<dyn RecordBatchReader + Send + Sync>>>;
+
+    /// creates an iterator
+    async fn execute(&self, partition: usize) -> Result<SendableRecordBatchReader>;
 }
 
 /// Partitioning schemes supported by operators.
@@ -120,7 +120,7 @@ pub trait AggregateExpr: Send + Sync + Debug {
     /// the accumulator used to accumulate values from the expressions.
     /// the accumulator expects the same number of arguments as `expressions` and must
     /// return states with the same description as `state_fields`
-    fn create_accumulator(&self) -> Result<Rc<RefCell<dyn Accumulator>>>;
+    fn create_accumulator(&self) -> Result<Box<dyn Accumulator>>;
 
     /// the fields that encapsulate the Accumulator's state
     /// the number of fields here equals the number of states that the accumulator contains
@@ -190,11 +190,13 @@ pub mod array_expressions;
 pub mod common;
 pub mod csv;
 pub mod datetime_expressions;
+pub mod distinct_expressions;
 pub mod empty;
 pub mod explain;
 pub mod expressions;
 pub mod filter;
 pub mod functions;
+pub mod group_scalar;
 pub mod hash_aggregate;
 pub mod limit;
 pub mod math_expressions;
