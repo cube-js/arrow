@@ -116,6 +116,7 @@ impl<'a, S: SchemaProvider> SqlToRel<'a, S> {
             file_type,
             has_header,
             location,
+            ..
         } = statement;
 
         // semantic checks
@@ -142,7 +143,7 @@ impl<'a, S: SchemaProvider> SqlToRel<'a, S> {
 
         Ok(LogicalPlan::CreateExternalTable {
             schema,
-            name: name.clone(),
+            name: name.to_string(),
             location: location.clone(),
             file_type: file_type.clone(),
             has_header: *has_header,
@@ -443,7 +444,25 @@ impl<'a, S: SchemaProvider> SqlToRel<'a, S> {
     ) -> Result<LogicalPlan> {
         let group_expr: Vec<Expr> = group_by
             .iter()
-            .map(|e| self.sql_to_rex(&e, &input.schema()))
+            .map(|e| {
+                match e {
+                    SQLExpr::Value(Value::Number(n)) => match n.parse::<usize>() {
+                        Ok(n) => {
+                            if n - 1 < projection_expr.len() && n >= 1 {
+                                if is_aggregate_expr(&projection_expr[n - 1]) {
+                                    Err(ExecutionError::General(format!("Can't group by aggregate function: {:?}", projection_expr[n - 1])))
+                                } else {
+                                    Ok(projection_expr[n - 1].clone())
+                                }
+                            } else {
+                                Err(ExecutionError::General(format!("Select column reference should be within 1..{} but found {}", projection_expr.len(), n)))
+                            }
+                        },
+                        Err(_) => Err(ExecutionError::General(format!("Can't parse {} as number", n))),
+                    }
+                    _ => self.sql_to_rex(&e, &input.schema())
+                }
+            })
             .collect::<Result<Vec<Expr>>>()?;
 
         let group_by_count = group_expr.len();
@@ -682,7 +701,8 @@ impl<'a, S: SchemaProvider> SqlToRel<'a, S> {
             }
 
             SQLExpr::Function(function) => {
-                let name: String = function.name.to_string();
+                // TODO parser should do lowercase?
+                let name: String = function.name.to_string().to_lowercase();
 
                 // first, scalar built-in
                 if let Ok(fun) = functions::BuiltinScalarFunction::from_str(&name) {

@@ -25,6 +25,8 @@ use sqlparser::{
     parser::{Parser, ParserError},
     tokenizer::{Token, Tokenizer},
 };
+use sqlparser::ast::ObjectName;
+use sqlparser::dialect::MySqlDialect;
 
 // Use `Parser::expected` instead, if possible
 macro_rules! parser_err {
@@ -48,7 +50,7 @@ pub enum FileType {
 #[derive(Debug, Clone, PartialEq)]
 pub struct CreateExternalTable {
     /// Table name
-    pub name: String,
+    pub name: ObjectName,
     /// Optional schema
     pub columns: Vec<ColumnDef>,
     /// File type (Parquet, NDJSON, CSV)
@@ -57,6 +59,8 @@ pub struct CreateExternalTable {
     pub has_header: bool,
     /// Path to file
     pub location: String,
+    /// Default indexes for table
+    pub indexes: Vec<SQLStatement>
 }
 
 /// DataFusion extension DDL for `EXPLAIN` and `EXPLAIN VERBOSE`
@@ -86,10 +90,34 @@ pub struct DFParser {
     parser: Parser,
 }
 
+#[derive(Debug)]
+pub struct MySqlDialectWithBackTicks {}
+
+impl Dialect for MySqlDialectWithBackTicks {
+    fn is_delimited_identifier_start(&self, ch: char) -> bool {
+        ch == '"' || ch == '`'
+    }
+
+    fn is_identifier_start(&self, ch: char) -> bool {
+        // See https://dev.mysql.com/doc/refman/8.0/en/identifiers.html.
+        // We don't yet support identifiers beginning with numbers, as that
+        // makes it hard to distinguish numeric literals.
+        (ch >= 'a' && ch <= 'z')
+            || (ch >= 'A' && ch <= 'Z')
+            || ch == '_'
+            || ch == '$'
+            || (ch >= '\u{0080}' && ch <= '\u{ffff}')
+    }
+
+    fn is_identifier_part(&self, ch: char) -> bool {
+        self.is_identifier_start(ch) || (ch >= '0' && ch <= '9')
+    }
+}
+
 impl DFParser {
     /// Parse the specified tokens
     pub fn new(sql: &str) -> Result<Self, ParserError> {
-        let dialect = &GenericDialect {};
+        let dialect = &MySqlDialectWithBackTicks {};
         DFParser::new_with_dialect(sql, dialect)
     }
 
@@ -107,7 +135,7 @@ impl DFParser {
 
     /// Parse a SQL statement and produce a set of statements with dialect
     pub fn parse_sql(sql: &str) -> Result<Vec<Statement>, ParserError> {
-        let dialect = &GenericDialect {};
+        let dialect = &MySqlDialectWithBackTicks {};
         DFParser::parse_sql_with_dialect(sql, dialect)
     }
 
@@ -176,6 +204,8 @@ impl DFParser {
     pub fn parse_create(&mut self) -> Result<Statement, ParserError> {
         if self.parser.parse_keyword(Keyword::EXTERNAL) {
             self.parse_create_external_table()
+        } else if self.parser.parse_keyword(Keyword::SCHEMA) {
+            self.parse_create_schema()
         } else {
             Ok(Statement::Statement(self.parser.parse_create()?))
         }
@@ -263,10 +293,23 @@ impl DFParser {
         })
     }
 
+    fn parse_create_schema(&mut self) -> Result<Statement, ParserError> {
+        self.parser.parse_keywords(&[Keyword::IF, Keyword::NOT, Keyword::EXISTS]);
+        let schema_name = self.parser.parse_object_name()?;
+        Ok(Statement::Statement(SQLStatement::CreateSchema { schema_name }))
+    }
+
     fn parse_create_external_table(&mut self) -> Result<Statement, ParserError> {
         self.parser.expect_keyword(Keyword::TABLE)?;
         let table_name = self.parser.parse_object_name()?;
         let (columns, _) = self.parse_columns()?;
+
+        let mut indexes = Vec::new();
+
+        while self.parser.parse_keywords(&[Keyword::WITH, Keyword::INDEX]) {
+            indexes.push(self.parser.parse_create_index(false)?);
+        }
+
         self.parser
             .expect_keywords(&[Keyword::STORED, Keyword::AS])?;
 
@@ -279,11 +322,12 @@ impl DFParser {
         let location = self.parser.parse_literal_string()?;
 
         let create = CreateExternalTable {
-            name: table_name.to_string(),
+            name: table_name,
             columns,
             file_type,
             has_header,
             location,
+            indexes
         };
         Ok(Statement::CreateExternalTable(create))
     }
@@ -373,22 +417,24 @@ mod tests {
         // positive case
         let sql = "CREATE EXTERNAL TABLE t(c1 int) STORED AS CSV LOCATION 'foo.csv'";
         let expected = Statement::CreateExternalTable(CreateExternalTable {
-            name: "t".into(),
+            name: ObjectName(vec![Ident::new("t")]),
             columns: vec![make_column_def("c1", DataType::Int)],
             file_type: FileType::CSV,
             has_header: false,
             location: "foo.csv".into(),
+            indexes: vec![]
         });
         expect_parse_ok(sql, expected)?;
 
         // positive case: it is ok for parquet files not to have columns specified
         let sql = "CREATE EXTERNAL TABLE t STORED AS PARQUET LOCATION 'foo.parquet'";
         let expected = Statement::CreateExternalTable(CreateExternalTable {
-            name: "t".into(),
+            name: ObjectName(vec![Ident::new("t")]),
             columns: vec![],
             file_type: FileType::Parquet,
             has_header: false,
             location: "foo.parquet".into(),
+            indexes: vec![]
         });
         expect_parse_ok(sql, expected)?;
 
