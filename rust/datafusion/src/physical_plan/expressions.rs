@@ -1175,6 +1175,9 @@ pub fn numerical_coercion(lhs_type: &DataType, rhs_type: &DataType) -> Option<Da
         (UInt8, _) => Some(UInt8),
         (_, UInt8) => Some(UInt8),
 
+        (Timestamp(TimeUnit::Nanosecond, None), _) => Some(Timestamp(TimeUnit::Nanosecond, None)),
+        (_, Timestamp(TimeUnit::Nanosecond, None)) => Some(Timestamp(TimeUnit::Nanosecond, None)),
+
         _ => None,
     }
 }
@@ -1536,6 +1539,7 @@ pub fn is_numeric(dt: &DataType) -> bool {
         DataType::Int8 | DataType::Int16 | DataType::Int32 | DataType::Int64 => true,
         DataType::UInt8 | DataType::UInt16 | DataType::UInt32 | DataType::UInt64 => true,
         DataType::Float16 | DataType::Float32 | DataType::Float64 => true,
+        DataType::Timestamp(_, _) => true,
         _ => false,
     }
 }

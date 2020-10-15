@@ -22,7 +22,7 @@ use std::fs::File;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::task::{Context, Poll};
-use std::{fmt, thread};
+use std::{fmt, thread, result};
 
 use super::{RecordBatchStream, SendableRecordBatchStream};
 use crate::error::{DataFusionError, Result};
@@ -31,17 +31,21 @@ use crate::physical_plan::{common, Partitioning};
 use arrow::datatypes::{Schema, SchemaRef};
 use arrow::error::{ArrowError, Result as ArrowResult};
 use arrow::record_batch::RecordBatch;
-use parquet::file::reader::SerializedFileReader;
+use parquet::file::reader::{SerializedFileReader, FileReader, RowGroupReader};
 
 use crossbeam::channel::{bounded, Receiver, RecvError, Sender};
-use fmt::Debug;
 use parquet::arrow::{ArrowReader, ParquetFileArrowReader};
+use parquet::schema::types::Type;
+use parquet::file::metadata::{ParquetMetaData, RowGroupMetaData, FileMetaData};
+use parquet::record::reader::RowIter;
+use parquet::errors::ParquetError;
+use std::fmt::Formatter;
 
 use async_trait::async_trait;
 use futures::stream::Stream;
 
 /// Execution plan for scanning a Parquet file
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ParquetExec {
     /// Path to directory containing partitioned Parquet files with the same schema
     filenames: Vec<String>,
@@ -51,14 +55,29 @@ pub struct ParquetExec {
     projection: Vec<usize>,
     /// Batch size
     batch_size: usize,
+    row_group_filter: Option<Arc<dyn Fn(&RowGroupMetaData) -> bool + Send + Sync>>
+}
+
+impl fmt::Debug for ParquetExec {
+    fn fmt(&self, f: &mut Formatter<'_>) -> result::Result<(), fmt::Error> {
+        f.write_fmt(format_args!("ParquetExec: {:?} using {:?}, {:?}", self.filenames, self.schema, self.projection))
+    }
 }
 
 impl ParquetExec {
+    /// TODO
+    pub fn try_new(path: &str,
+                   projection: Option<Vec<usize>>,
+                   batch_size: usize) -> Result<Self> {
+        Self::try_new_with_filter(path, projection, batch_size, None)
+    }
+
     /// Create a new Parquet reader execution plan
-    pub fn try_new(
+    pub fn try_new_with_filter(
         path: &str,
         projection: Option<Vec<usize>>,
         batch_size: usize,
+        row_group_filter: Option<Arc<dyn Fn(&RowGroupMetaData) -> bool + Send + Sync>>
     ) -> Result<Self> {
         let mut filenames: Vec<String> = vec![];
         common::build_file_list(path, &mut filenames, ".parquet")?;
@@ -98,6 +117,7 @@ impl ParquetExec {
             schema: Arc::new(projected_schema),
             projection,
             batch_size,
+            row_group_filter
         }
     }
 }
@@ -148,9 +168,10 @@ impl ExecutionPlan for ParquetExec {
         let filename = self.filenames[partition].clone();
         let projection = self.projection.clone();
         let batch_size = self.batch_size;
+        let row_group_filter = self.row_group_filter.clone();
 
         thread::spawn(move || {
-            if let Err(e) = read_file(&filename, projection, batch_size, response_tx) {
+            if let Err(e) = read_file(&filename, projection, batch_size, response_tx, row_group_filter) {
                 println!("Parquet reader thread terminated due to error: {:?}", e);
             }
         });
@@ -172,14 +193,78 @@ fn send_result(
     Ok(())
 }
 
+struct FilteredFileReader {
+    file_reader: Rc<dyn FileReader>,
+    filtered_row_groups: Vec<usize>,
+    filtered_metadata: ParquetMetaData
+}
+
+impl FilteredFileReader {
+    pub fn new(
+        file_reader: Rc<dyn FileReader>,
+        row_group_filter: Arc<dyn Fn(&RowGroupMetaData) -> bool + Send + Sync>
+    ) -> FilteredFileReader {
+        let filtered_row_groups = (0..file_reader.num_row_groups())
+            .filter(
+                |i| match file_reader.get_row_group(*i) {
+                    Ok(group) => row_group_filter(group.metadata()),
+                    _ => true
+                }
+            )
+            .collect::<Vec<_>>();
+        let file_meta = file_reader.metadata().file_metadata();
+        FilteredFileReader {
+            file_reader: file_reader.clone(),
+            filtered_metadata: ParquetMetaData::new(
+                FileMetaData::new(
+                    file_meta.version(),
+                    file_meta.num_rows(),
+                    file_meta.created_by().clone(),
+                    file_meta.key_value_metadata().clone(),
+                    Rc::new(file_meta.schema().clone()),
+                    file_meta.schema_descr_ptr(),
+                    file_meta.column_orders().map(|v| v.clone())
+                ),
+                filtered_row_groups.iter().map(|i| {
+                    let group = file_reader.metadata().row_group(*i);
+                    RowGroupMetaData::from_thrift(group.schema_descr_ptr(), group.to_thrift()).unwrap()
+                }).collect::<Vec<_>>()
+            ),
+            filtered_row_groups,
+        }
+    }
+}
+
+impl FileReader for FilteredFileReader {
+    fn metadata(&self) -> &ParquetMetaData {
+        &self.filtered_metadata
+    }
+
+    fn num_row_groups(&self) -> usize {
+        self.filtered_row_groups.len()
+    }
+
+    fn get_row_group(&self, i: usize) -> result::Result<Box<dyn RowGroupReader + '_>, ParquetError> {
+        self.file_reader.get_row_group(self.filtered_row_groups[i])
+    }
+
+    fn get_row_iter(&self, _: Option<Type>) -> result::Result<RowIter, ParquetError> {
+        unimplemented!()
+    }
+}
+
 fn read_file(
     filename: &str,
     projection: Vec<usize>,
     batch_size: usize,
     response_tx: Sender<Option<ArrowResult<RecordBatch>>>,
+    row_group_filter: Option<Arc<dyn Fn(&RowGroupMetaData) -> bool + Send + Sync>>
 ) -> Result<()> {
     let file = File::open(&filename)?;
-    let file_reader = Rc::new(SerializedFileReader::new(file)?);
+    let mut file_reader: Rc<dyn FileReader> = Rc::new(SerializedFileReader::new(file)?);
+    if let Some(filter) = row_group_filter {
+        file_reader = Rc::new(FilteredFileReader::new(file_reader, filter));
+    }
     let mut arrow_reader = ParquetFileArrowReader::new(file_reader);
     let mut batch_reader =
         arrow_reader.get_record_reader_by_columns(projection.clone(), batch_size)?;
