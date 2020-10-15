@@ -1556,7 +1556,7 @@ mod tests {
 
         // define a udaf, using a DataFusion's accumulator
         let my_avg = create_udaf(
-            "MY_AVG",
+            "my_avg",
             DataType::Float64,
             Arc::new(DataType::Float64),
             Arc::new(|| Ok(Box::new(AvgAccumulator::try_new(&DataType::Float64)?))),

@@ -204,6 +204,7 @@ impl DefaultPhysicalPlanner {
                             &logical_input_schema,
                             &physical_input_schema,
                             ctx_state,
+                            None
                         )
                     })
                     .collect::<Result<Vec<_>>>()?;
@@ -607,6 +608,7 @@ impl DefaultPhysicalPlanner {
         logical_input_schema: &DFSchema,
         physical_input_schema: &Schema,
         ctx_state: &ExecutionContextState,
+        alias: Option<String>
     ) -> Result<Arc<dyn AggregateExpr>> {
         // unpack aliased logical expressions, e.g. "sum(col) as total"
         let (name, e) = match e {
@@ -632,7 +634,7 @@ impl DefaultPhysicalPlanner {
                     *distinct,
                     &args,
                     physical_input_schema,
-                    name,
+                    alias.unwrap_or(name),
                 )
             }
             Expr::AggregateUDF { fun, args, .. } => {
@@ -643,7 +645,7 @@ impl DefaultPhysicalPlanner {
                     })
                     .collect::<Result<Vec<_>>>()?;
 
-                udaf::create_aggregate_expr(fun, &args, physical_input_schema, name)
+                udaf::create_aggregate_expr(fun, &args, physical_input_schema, alias.unwrap_or(name))
             }
             other => Err(DataFusionError::Internal(format!(
                 "Invalid aggregate expression '{:?}'",

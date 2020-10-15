@@ -128,6 +128,7 @@ impl<'a, S: ContextProvider> SqlToRel<'a, S> {
             file_type,
             has_header,
             location,
+            ..
         } = statement;
 
         // semantic checks
@@ -154,7 +155,7 @@ impl<'a, S: ContextProvider> SqlToRel<'a, S> {
 
         Ok(LogicalPlan::CreateExternalTable {
             schema: schema.to_dfschema_ref()?,
-            name: name.clone(),
+            name: name.to_string(),
             location: location.clone(),
             file_type: *file_type,
             has_header: *has_header,
@@ -491,7 +492,25 @@ impl<'a, S: ContextProvider> SqlToRel<'a, S> {
     ) -> Result<(LogicalPlan, Vec<Expr>)> {
         let group_by_exprs = group_by
             .iter()
-            .map(|e| self.sql_to_rex(e, &input.schema()))
+            .map(|e| {
+                match e {
+                    SQLExpr::Value(Value::Number(n)) => match n.parse::<usize>() {
+                        Ok(n) => {
+                            if n - 1 < select_exprs.len() && n >= 1 {
+                                if find_aggregate_exprs(&vec![select_exprs[n - 1].clone()]).len() > 0 {
+                                    Err(DataFusionError::Plan(format!("Can't group by aggregate function: {:?}", select_exprs[n - 1])))
+                                } else {
+                                    Ok(select_exprs[n - 1].clone())
+                                }
+                            } else {
+                                Err(DataFusionError::Plan(format!("Select column reference should be within 1..{} but found {}", select_exprs.len(), n)))
+                            }
+                        },
+                        Err(_) => Err(DataFusionError::Plan(format!("Can't parse {} as number", n))),
+                    }
+                    _ => self.sql_to_rex(e, &input.schema())
+                }
+            })
             .collect::<Result<Vec<Expr>>>()?;
 
         let aggr_projection_exprs = group_by_exprs
@@ -796,7 +815,8 @@ impl<'a, S: ContextProvider> SqlToRel<'a, S> {
             }
 
             SQLExpr::Function(function) => {
-                let name: String = function.name.to_string();
+                // TODO parser should do lowercase?
+                let name: String = function.name.to_string().to_lowercase();
 
                 // first, scalar built-in
                 if let Ok(fun) = functions::BuiltinScalarFunction::from_str(&name) {

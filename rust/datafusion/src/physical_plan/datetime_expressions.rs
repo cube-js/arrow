@@ -26,7 +26,7 @@ use arrow::{
     datatypes::{DataType, TimeUnit, ToByteSlice},
 };
 use chrono::Duration;
-use chrono::{prelude::*, LocalResult};
+use chrono::{prelude::*};
 
 #[inline]
 /// Accepts a string in RFC3339 / ISO8601 standard format and some
@@ -79,7 +79,7 @@ use chrono::{prelude::*, LocalResult};
 /// the system timezone is set to Americas/New_York (UTC-5) the
 /// timestamp will be interpreted as though it were
 /// `1997-01-31T09:26:56.123-05:00`
-fn string_to_timestamp_nanos(s: &str) -> Result<i64> {
+pub fn string_to_timestamp_nanos(s: &str) -> Result<i64> {
     // Fast path:  RFC3339 timestamp (with a T)
     // Example: 2020-09-08T13:42:29.190855Z
     if let Ok(ts) = DateTime::parse_from_rfc3339(s) {
@@ -145,26 +145,10 @@ fn string_to_timestamp_nanos(s: &str) -> Result<i64> {
 
 /// Converts the naive datetime (which has no specific timezone) to a
 /// nanosecond epoch timestamp relative to UTC.
-fn naive_datetime_to_timestamp(s: &str, datetime: NaiveDateTime) -> Result<i64> {
+fn naive_datetime_to_timestamp(_s: &str, datetime: NaiveDateTime) -> Result<i64> {
     let l = Local {};
 
-    match l.from_local_datetime(&datetime) {
-        LocalResult::None => Err(DataFusionError::Execution(format!(
-            "Error parsing '{}' as timestamp: local time representation is invalid",
-            s
-        ))),
-        LocalResult::Single(local_datetime) => {
-            Ok(local_datetime.with_timezone(&Utc).timestamp_nanos())
-        }
-        // Ambiguous times can happen if the timestamp is exactly when
-        // a daylight savings time transition occurs, for example, and
-        // so the datetime could validly be said to be in two
-        // potential offsets. However, since we are about to convert
-        // to UTC anyways, we can pick one arbitrarily
-        LocalResult::Ambiguous(local_datetime, _) => {
-            Ok(local_datetime.with_timezone(&Utc).timestamp_nanos())
-        }
-    }
+    Ok(l.from_utc_datetime(&datetime).with_timezone(&Utc).timestamp_nanos())
 }
 
 /// convert an array of strings into `Timestamp(Nanosecond, None)`
@@ -315,6 +299,7 @@ mod tests {
     use arrow::array::{Int64Array, StringBuilder};
 
     use super::*;
+    use chrono::LocalResult;
 
     #[test]
     fn string_to_timestamp_timezone() -> Result<()> {
@@ -378,6 +363,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "to_timestamp implementation overridden by Cube Store"]
     fn string_to_timestamp_no_timezone() -> Result<()> {
         // This test is designed to succeed in regardless of the local
         // timezone the test machine is running. Thus it is still
