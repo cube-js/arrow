@@ -27,7 +27,7 @@ use crate::physical_plan::{Accumulator, AggregateExpr};
 use crate::physical_plan::{Distribution, ExecutionPlan, Partitioning, PhysicalExpr};
 
 use crate::arrow::array::PrimitiveArrayOps;
-use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
+use arrow::datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit};
 use arrow::error::Result as ArrowResult;
 use arrow::record_batch::{RecordBatch, RecordBatchReader};
 use arrow::{
@@ -41,6 +41,7 @@ use arrow::{
 use fnv::FnvHashMap;
 
 use super::{common, expressions::Column};
+use arrow::array::TimestampMicrosecondArray;
 
 /// Hash aggregate modes
 #[derive(Debug, Copy, Clone)]
@@ -552,6 +553,7 @@ fn create_batch_from_map(
                     GroupByScalar::UInt32(n) => Arc::new(UInt32Array::from(vec![*n])),
                     GroupByScalar::UInt64(n) => Arc::new(UInt64Array::from(vec![*n])),
                     GroupByScalar::Utf8(str) => Arc::new(StringArray::from(vec![&**str])),
+                    GroupByScalar::TimeMicrosecond(n) => Arc::new(TimestampMicrosecondArray::from(vec![*n])),
                 })
                 .collect::<Vec<ArrayRef>>();
 
@@ -632,6 +634,7 @@ enum GroupByScalar {
     Int16(i16),
     Int32(i32),
     Int64(i64),
+    TimeMicrosecond(i64),
     Utf8(String),
 }
 
@@ -680,9 +683,13 @@ fn create_key(
                 let array = col.as_any().downcast_ref::<StringArray>().unwrap();
                 vec[i] = GroupByScalar::Utf8(String::from(array.value(row)))
             }
-            _ => {
+            DataType::Timestamp(TimeUnit::Microsecond, None) => {
+                let array = col.as_any().downcast_ref::<TimestampMicrosecondArray>().unwrap();
+                vec[i] = GroupByScalar::TimeMicrosecond(array.value(row))
+            }
+            x => {
                 return Err(ExecutionError::ExecutionError(
-                    "Unsupported GROUP BY data type".to_string(),
+                    format!("Unsupported GROUP BY data type: {:?}", x),
                 ))
             }
         }

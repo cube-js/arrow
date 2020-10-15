@@ -28,13 +28,14 @@ use array::{
     Int8Array, LargeStringArray, StringArray, UInt16Array, UInt32Array, UInt64Array,
     UInt8Array,
 };
-use arrow::datatypes::{DataType, SchemaRef};
+use arrow::datatypes::{DataType, SchemaRef, TimeUnit};
 use arrow::error::Result as ArrowResult;
 use arrow::record_batch::{RecordBatch, RecordBatchReader};
 use arrow::{
     array::{self, ArrayRef},
     datatypes::Schema,
 };
+use arrow::array::TimestampMicrosecondArray;
 
 /// Iterator over a vector of record batches
 pub struct RecordBatchIterator {
@@ -160,6 +161,9 @@ pub fn create_batch_empty(schema: &Schema) -> ArrowResult<RecordBatch> {
             }
             DataType::Boolean => {
                 Ok(Arc::new(BooleanArray::from(vec![] as Vec<bool>)) as ArrayRef)
+            }
+            DataType::Timestamp(TimeUnit::Microsecond, None) => {
+                Ok(Arc::new(TimestampMicrosecondArray::from(vec![] as Vec<i64>)) as ArrayRef)
             }
             _ => Err(ExecutionError::NotImplemented(format!(
                 "Cannot convert datatype {:?} to array",

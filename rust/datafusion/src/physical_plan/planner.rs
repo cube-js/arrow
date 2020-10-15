@@ -217,7 +217,7 @@ impl DefaultPhysicalPlanner {
                     .collect::<Result<Vec<_>>>()?;
                 let aggregates = aggr_expr
                     .iter()
-                    .map(|e| self.create_aggregate_expr(e, &input_schema, ctx_state))
+                    .map(|e| self.create_aggregate_expr(e, &input_schema, ctx_state, None))
                     .collect::<Result<Vec<_>>>()?;
 
                 let initial_aggr = Arc::new(HashAggregateExec::try_new(
@@ -468,6 +468,7 @@ impl DefaultPhysicalPlanner {
         e: &Expr,
         input_schema: &Schema,
         ctx_state: &ExecutionContextState,
+        alias: Option<String>
     ) -> Result<Arc<dyn AggregateExpr>> {
         match e {
             Expr::AggregateFunction { fun, args, .. } => {
@@ -479,7 +480,7 @@ impl DefaultPhysicalPlanner {
                     fun,
                     &args,
                     input_schema,
-                    e.name(input_schema)?,
+                    alias.unwrap_or(e.name(input_schema)?),
                 )
             }
             Expr::AggregateUDF { fun, args, .. } => {
@@ -492,8 +493,11 @@ impl DefaultPhysicalPlanner {
                     fun,
                     &args,
                     input_schema,
-                    e.name(input_schema)?,
+                    alias.unwrap_or(e.name(input_schema)?),
                 )
+            }
+            Expr::Alias(expr, alias) => {
+                self.create_aggregate_expr(expr.as_ref(), input_schema, ctx_state, Some(alias.to_string()))
             }
             other => Err(ExecutionError::General(format!(
                 "Invalid aggregate expression '{:?}'",

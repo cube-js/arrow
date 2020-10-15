@@ -121,6 +121,8 @@ pub enum BuiltinScalarFunction {
     ToTimestamp,
     /// construct an array from columns
     Array,
+    /// Convert timezone
+    ConvertTz
 }
 
 impl fmt::Display for BuiltinScalarFunction {
@@ -154,6 +156,7 @@ impl FromStr for BuiltinScalarFunction {
             "length" => BuiltinScalarFunction::Length,
             "concat" => BuiltinScalarFunction::Concat,
             "to_timestamp" => BuiltinScalarFunction::ToTimestamp,
+            "convert_tz" => BuiltinScalarFunction::ConvertTz,
             "array" => BuiltinScalarFunction::Array,
             _ => {
                 return Err(ExecutionError::General(format!(
@@ -191,6 +194,9 @@ pub fn return_type(
         BuiltinScalarFunction::Length => Ok(DataType::UInt32),
         BuiltinScalarFunction::Concat => Ok(DataType::Utf8),
         BuiltinScalarFunction::ToTimestamp => {
+            Ok(DataType::Timestamp(TimeUnit::Nanosecond, None))
+        }
+        BuiltinScalarFunction::ConvertTz => {
             Ok(DataType::Timestamp(TimeUnit::Nanosecond, None))
         }
         BuiltinScalarFunction::Array => Ok(DataType::FixedSizeList(
@@ -233,6 +239,9 @@ pub fn create_physical_expr(
         BuiltinScalarFunction::ToTimestamp => {
             |args| Ok(Arc::new(datetime_expressions::to_timestamp(args)?))
         }
+        BuiltinScalarFunction::ConvertTz => {
+            |args| Ok(args[0].clone()) // TODO
+        }
         BuiltinScalarFunction::Array => |args| Ok(array_expressions::array(args)?),
     });
     // coerce
@@ -260,6 +269,7 @@ fn signature(fun: &BuiltinScalarFunction) -> Signature {
         BuiltinScalarFunction::Length => Signature::Uniform(1, vec![DataType::Utf8]),
         BuiltinScalarFunction::Concat => Signature::Variadic(vec![DataType::Utf8]),
         BuiltinScalarFunction::ToTimestamp => Signature::Uniform(1, vec![DataType::Utf8]),
+        BuiltinScalarFunction::ConvertTz => Signature::Exact(vec![DataType::Timestamp(TimeUnit::Nanosecond, None), DataType::Utf8]),
         BuiltinScalarFunction::Array => {
             Signature::Variadic(array_expressions::SUPPORTED_ARRAY_TYPES.to_vec())
         }
