@@ -25,7 +25,7 @@ use arrow::{
     buffer::Buffer,
     datatypes::{DataType, TimeUnit, ToByteSlice},
 };
-use chrono::{prelude::*, LocalResult};
+use chrono::{prelude::*};
 
 #[inline]
 /// Accepts a string in RFC3339 / ISO8601 standard format and some
@@ -144,7 +144,7 @@ pub fn string_to_timestamp_nanos(s: &str) -> Result<i64> {
 
 /// Converts the naive datetime (which has no specific timezone) to a
 /// nanosecond epoch timestamp relative to UTC.
-fn naive_datetime_to_timestamp(s: &str, datetime: NaiveDateTime) -> Result<i64> {
+fn naive_datetime_to_timestamp(_s: &str, datetime: NaiveDateTime) -> Result<i64> {
     let l = Local {};
 
     Ok(l.from_utc_datetime(&datetime).with_timezone(&Utc).timestamp_nanos())

@@ -88,6 +88,7 @@ impl From<&GroupByScalar> for ScalarValue {
             GroupByScalar::UInt32(v) => ScalarValue::UInt32(Some(*v)),
             GroupByScalar::UInt64(v) => ScalarValue::UInt64(Some(*v)),
             GroupByScalar::Utf8(v) => ScalarValue::Utf8(Some(v.clone())),
+            GroupByScalar::TimeMicrosecond(v) => ScalarValue::TimeMicrosecond(Some(*v)),
         }
     }
 }

@@ -19,11 +19,7 @@
 
 use std::{convert::TryFrom, fmt, sync::Arc};
 
-use arrow::array::{
-    Array, BooleanArray, Float32Array, Float64Array, Int16Array, Int32Array, Int64Array,
-    Int8Array, LargeStringArray, ListArray, StringArray, UInt16Array, UInt32Array,
-    UInt64Array, UInt8Array,
-};
+use arrow::array::{Array, BooleanArray, Float32Array, Float64Array, Int16Array, Int32Array, Int64Array, Int8Array, LargeStringArray, ListArray, StringArray, UInt16Array, UInt32Array, UInt64Array, UInt8Array, TimestampMicrosecondArray};
 use arrow::array::{
     Int16Builder, Int32Builder, Int64Builder, Int8Builder, ListBuilder, UInt16Builder,
     UInt32Builder, UInt64Builder, UInt8Builder,
@@ -34,6 +30,7 @@ use arrow::{
 };
 
 use crate::error::{ExecutionError, Result};
+use arrow::datatypes::TimeUnit;
 
 /// Represents a dynamically typed, nullable single value.
 /// This is the single-valued counter-part of arrow’s `Array`.
@@ -67,6 +64,8 @@ pub enum ScalarValue {
     LargeUtf8(Option<String>),
     /// list of nested ScalarValue
     List(Option<Vec<ScalarValue>>, DataType),
+    /// Timestamp Microseconds
+    TimeMicrosecond(Option<i64>)
 }
 
 macro_rules! typed_cast {
@@ -122,6 +121,7 @@ impl ScalarValue {
             ScalarValue::Int16(_) => DataType::Int16,
             ScalarValue::Int32(_) => DataType::Int32,
             ScalarValue::Int64(_) => DataType::Int64,
+            ScalarValue::TimeMicrosecond(_) => DataType::Timestamp(TimeUnit::Microsecond, None),
             ScalarValue::Float32(_) => DataType::Float32,
             ScalarValue::Float64(_) => DataType::Float64,
             ScalarValue::Utf8(_) => DataType::Utf8,
@@ -167,6 +167,7 @@ impl ScalarValue {
             ScalarValue::UInt16(e) => Arc::new(UInt16Array::from(vec![*e])),
             ScalarValue::UInt32(e) => Arc::new(UInt32Array::from(vec![*e])),
             ScalarValue::UInt64(e) => Arc::new(UInt64Array::from(vec![*e])),
+            ScalarValue::TimeMicrosecond(e) => Arc::new(TimestampMicrosecondArray::from(vec![*e])),
             ScalarValue::Utf8(e) => Arc::new(StringArray::from(vec![e.as_deref()])),
             ScalarValue::LargeUtf8(e) => {
                 Arc::new(LargeStringArray::from(vec![e.as_deref()]))
@@ -349,6 +350,7 @@ impl fmt::Display for ScalarValue {
             ScalarValue::UInt16(e) => format_option!(f, e)?,
             ScalarValue::UInt32(e) => format_option!(f, e)?,
             ScalarValue::UInt64(e) => format_option!(f, e)?,
+            ScalarValue::TimeMicrosecond(e) => format_option!(f, e)?,
             ScalarValue::Utf8(e) => format_option!(f, e)?,
             ScalarValue::LargeUtf8(e) => format_option!(f, e)?,
             ScalarValue::List(e, _) => match e {
@@ -381,6 +383,7 @@ impl fmt::Debug for ScalarValue {
             ScalarValue::UInt16(_) => write!(f, "UInt16({})", self),
             ScalarValue::UInt32(_) => write!(f, "UInt32({})", self),
             ScalarValue::UInt64(_) => write!(f, "UInt64({})", self),
+            ScalarValue::TimeMicrosecond(_) => write!(f, "TimeMicrosecond({})", self),
             ScalarValue::Utf8(_) => write!(f, "Utf8(\"{}\")", self),
             ScalarValue::LargeUtf8(_) => write!(f, "LargeUtf8(\"{}\")", self),
             ScalarValue::List(_, _) => write!(f, "List([{}])", self),

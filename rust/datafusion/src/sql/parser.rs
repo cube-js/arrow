@@ -21,12 +21,11 @@
 
 use sqlparser::{
     ast::{ColumnDef, Statement as SQLStatement, TableConstraint},
-    dialect::{keywords::Keyword, Dialect, GenericDialect},
+    dialect::{keywords::Keyword, Dialect},
     parser::{Parser, ParserError},
     tokenizer::{Token, Tokenizer},
 };
 use sqlparser::ast::ObjectName;
-use sqlparser::dialect::MySqlDialect;
 
 // Use `Parser::expected` instead, if possible
 macro_rules! parser_err {
@@ -91,6 +90,7 @@ pub struct DFParser {
 }
 
 #[derive(Debug)]
+/// MySql dialect that supports '`' for escaping
 pub struct MySqlDialectWithBackTicks {}
 
 impl Dialect for MySqlDialectWithBackTicks {
