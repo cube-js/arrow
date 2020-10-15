@@ -220,7 +220,7 @@ impl DefaultPhysicalPlanner {
                     .collect::<Result<Vec<_>>>()?;
                 let aggregates = aggr_expr
                     .iter()
-                    .map(|e| self.create_aggregate_expr(e, &input_schema, ctx_state, None))
+                    .map(|e| self.create_aggregate_expr(e, &input_schema, ctx_state))
                     .collect::<Result<Vec<_>>>()?;
 
                 let initial_aggr = Arc::new(HashAggregateExec::try_new(
@@ -470,8 +470,7 @@ impl DefaultPhysicalPlanner {
         &self,
         e: &Expr,
         input_schema: &Schema,
-        ctx_state: &ExecutionContextState,
-        alias: Option<String>
+        ctx_state: &ExecutionContextState
     ) -> Result<Arc<dyn AggregateExpr>> {
         // unpack aliased logical expressions, e.g. "sum(col) as total"
         let (name, e) = match e {
