@@ -30,6 +30,7 @@ use array::{
     Int8Array, LargeStringArray, StringArray, UInt16Array, UInt32Array, UInt64Array,
     UInt8Array,
 };
+use arrow::array::TimestampMicrosecondArray;
 use arrow::datatypes::{DataType, SchemaRef, TimeUnit};
 use arrow::error::Result as ArrowResult;
 use arrow::record_batch::RecordBatch;
@@ -37,7 +38,6 @@ use arrow::{
     array::{self, ArrayRef},
     datatypes::Schema,
 };
-use arrow::array::TimestampMicrosecondArray;
 use futures::{Stream, TryStreamExt};
 
 /// Stream of record batches
@@ -158,9 +158,10 @@ pub fn create_batch_empty(schema: &Schema) -> ArrowResult<RecordBatch> {
             DataType::Boolean => {
                 Ok(Arc::new(BooleanArray::from(vec![] as Vec<bool>)) as ArrayRef)
             }
-            DataType::Timestamp(TimeUnit::Microsecond, None) => {
-                Ok(Arc::new(TimestampMicrosecondArray::from(vec![] as Vec<i64>)) as ArrayRef)
-            }
+            DataType::Timestamp(TimeUnit::Microsecond, None) => Ok(Arc::new(
+                TimestampMicrosecondArray::from(vec![] as Vec<i64>),
+            )
+                as ArrayRef),
             _ => Err(DataFusionError::NotImplemented(format!(
                 "Cannot convert datatype {:?} to array",
                 f.data_type()

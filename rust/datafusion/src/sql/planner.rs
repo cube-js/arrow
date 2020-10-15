@@ -497,7 +497,7 @@ impl<'a, S: ContextProvider> SqlToRel<'a, S> {
                     SQLExpr::Value(Value::Number(n)) => match n.parse::<usize>() {
                         Ok(n) => {
                             if n - 1 < select_exprs.len() && n >= 1 {
-                                if find_aggregate_exprs(&vec![select_exprs[n - 1].clone()]).len() > 0 {
+                                if !find_aggregate_exprs(&vec![select_exprs[n - 1].clone()]).is_empty() {
                                     Err(DataFusionError::Plan(format!("Can't group by aggregate function: {:?}", select_exprs[n - 1])))
                                 } else {
                                     Ok(select_exprs[n - 1].clone())

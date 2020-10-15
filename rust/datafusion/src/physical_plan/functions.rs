@@ -377,7 +377,10 @@ fn signature(fun: &BuiltinScalarFunction) -> Signature {
             DataType::Utf8,
             DataType::Timestamp(TimeUnit::Nanosecond, None),
         ]),
-        BuiltinScalarFunction::ConvertTz => Signature::Exact(vec![DataType::Timestamp(TimeUnit::Nanosecond, None), DataType::Utf8]),
+        BuiltinScalarFunction::ConvertTz => Signature::Exact(vec![
+            DataType::Timestamp(TimeUnit::Nanosecond, None),
+            DataType::Utf8,
+        ]),
         BuiltinScalarFunction::Array => {
             Signature::Variadic(array_expressions::SUPPORTED_ARRAY_TYPES.to_vec())
         }
