@@ -301,7 +301,6 @@ mod tests {
     use arrow::array::{Int64Array, StringBuilder};
 
     use super::*;
-    use chrono::LocalResult;
 
     #[test]
     fn string_to_timestamp_timezone() -> Result<()> {
