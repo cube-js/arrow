@@ -26,6 +26,10 @@ use arrow::{
     datatypes::{DataType, TimeUnit, ToByteSlice},
 };
 use chrono::{prelude::*};
+use arrow::array::PrimitiveArrayOps;
+use chrono::naive::MIN_DATETIME;
+use std::ops::{Add, Sub};
+use chrono::Duration;
 
 #[inline]
 /// Accepts a string in RFC3339 / ISO8601 standard format and some
@@ -181,6 +185,72 @@ pub fn to_timestamp(args: &[ArrayRef]) -> Result<TimestampNanosecondArray> {
         num_rows,
         Some(string_args.null_count()),
         string_args.data().null_buffer().cloned(),
+        0,
+        vec![Buffer::from(result.to_byte_slice())],
+        vec![],
+    );
+
+    Ok(TimestampNanosecondArray::from(Arc::new(data)))
+}
+
+pub enum DateTruncGranularity {
+    Second,
+    Minute,
+    Hour,
+    Day,
+    Week,
+    Month,
+    Year
+}
+
+pub fn date_trunc(args: &[ArrayRef]) -> Result<TimestampNanosecondArray> {
+    let array =
+        &args[0]
+            .as_any()
+            .downcast_ref::<TimestampNanosecondArray>()
+            .ok_or_else(|| {
+                ExecutionError::General(format!(
+                    "Internal error: could not cast date_trunc array input to TimestampNanosecondArray"
+                ))
+            })?;
+
+    let granularity_array =
+        &args[1]
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .ok_or_else(|| {
+                ExecutionError::General(format!(
+                    "Internal error: could not cast date_trunc granularity input to StringArray"
+                ))
+            })?;
+
+    let range = (0..array.len());
+    let result = range.map(|i| {
+        if array.is_null(i) {
+            Ok(0 as i64)
+        } else {
+            let date_time = match granularity_array.value(i) {
+                "second" => array.value_as_datetime(i).map(|d| d),
+                "minute" => array.value_as_datetime(i).and_then(|d| d.with_second(0)),
+                "hour" => array.value_as_datetime(i).and_then(|d| d.with_second(0)).and_then(|d| d.with_minute(0)),
+                "day" => array.value_as_datetime(i).and_then(|d| d.with_second(0)).and_then(|d| d.with_minute(0)).and_then(|d| d.with_hour(0)),
+                "week" => array.value_as_datetime(i).and_then(|d| d.with_second(0)).and_then(|d| d.with_minute(0)).and_then(|d| d.with_hour(0)).map(|d| d - Duration::seconds(60 * 60 * 24 * d.weekday() as i64)),
+                "month" => array.value_as_datetime(i).and_then(|d| d.with_second(0)).and_then(|d| d.with_minute(0)).and_then(|d| d.with_hour(0)).and_then(|d| d.with_day0(0)),
+                "year" => array.value_as_datetime(i).and_then(|d| d.with_second(0)).and_then(|d| d.with_minute(0)).and_then(|d| d.with_hour(0)).and_then(|d| d.with_day0(0)).and_then(|d| d.with_month0(0)),
+                unsupported => return Err(ExecutionError::ExecutionError(format!("Unsupported date_trunc granularity: {}", unsupported)))
+            };
+            date_time.map(|d| d.timestamp_nanos())
+                .ok_or(
+                    ExecutionError::General(format!("Can't truncate date time: {:?}", array.value_as_datetime(i)))
+                )
+        }
+    }).collect::<Result<Vec<_>>>()?;
+
+    let data = ArrayData::new(
+        DataType::Timestamp(TimeUnit::Nanosecond, None),
+        array.len(),
+        Some(array.null_count()),
+        array.data().null_buffer().cloned(),
         0,
         vec![Buffer::from(result.to_byte_slice())],
         vec![],

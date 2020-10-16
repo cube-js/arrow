@@ -31,7 +31,7 @@
 
 use std::sync::Arc;
 
-use arrow::datatypes::{DataType, Schema};
+use arrow::datatypes::{DataType, Schema, TimeUnit};
 
 use super::{functions::Signature, PhysicalExpr};
 use crate::error::{DataFusionError, Result};
@@ -191,6 +191,10 @@ pub fn can_coerce_from(type_into: &DataType, type_from: &DataType) -> bool {
             Int8 | Int16 | Int32 | Int64 => true,
             UInt8 | UInt16 | UInt32 | UInt64 => true,
             Float32 | Float64 => true,
+            _ => false,
+        },
+        Timestamp(TimeUnit::Nanosecond, None) => match type_from {
+            Timestamp(_, None) => true,
             _ => false,
         },
         Utf8 => true,
