@@ -127,7 +127,7 @@ pub enum BuiltinScalarFunction {
     /// Convert timezone
     ConvertTz,
     /// Date truncate
-    DateTrunc
+    DateTrunc,
 }
 
 impl fmt::Display for BuiltinScalarFunction {
@@ -299,8 +299,14 @@ fn signature(fun: &BuiltinScalarFunction) -> Signature {
         }
         BuiltinScalarFunction::Concat => Signature::Variadic(vec![DataType::Utf8]),
         BuiltinScalarFunction::ToTimestamp => Signature::Uniform(1, vec![DataType::Utf8]),
-        BuiltinScalarFunction::ConvertTz => Signature::Exact(vec![DataType::Timestamp(TimeUnit::Nanosecond, None), DataType::Utf8]),
-        BuiltinScalarFunction::DateTrunc => Signature::Exact(vec![DataType::Timestamp(TimeUnit::Nanosecond, None), DataType::Utf8]),
+        BuiltinScalarFunction::ConvertTz => Signature::Exact(vec![
+            DataType::Timestamp(TimeUnit::Nanosecond, None),
+            DataType::Utf8,
+        ]),
+        BuiltinScalarFunction::DateTrunc => Signature::Exact(vec![
+            DataType::Timestamp(TimeUnit::Nanosecond, None),
+            DataType::Utf8,
+        ]),
         BuiltinScalarFunction::Array => {
             Signature::Variadic(array_expressions::SUPPORTED_ARRAY_TYPES.to_vec())
         }
