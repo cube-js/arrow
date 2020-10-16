@@ -21,7 +21,7 @@ use std::any::Any;
 use std::fs::File;
 use std::sync::Arc;
 use std::task::{Context, Poll};
-use std::{fmt, thread, result};
+use std::{fmt, result, thread};
 
 use super::{RecordBatchStream, SendableRecordBatchStream};
 use crate::error::{DataFusionError, Result};
@@ -30,14 +30,14 @@ use crate::physical_plan::{common, Partitioning};
 use arrow::datatypes::{Schema, SchemaRef};
 use arrow::error::{ArrowError, Result as ArrowResult};
 use arrow::record_batch::RecordBatch;
-use parquet::file::reader::{SerializedFileReader, FileReader, RowGroupReader};
+use parquet::file::reader::{FileReader, RowGroupReader, SerializedFileReader};
 
 use crossbeam::channel::{bounded, Receiver, RecvError, Sender};
 use parquet::arrow::{ArrowReader, ParquetFileArrowReader};
-use parquet::schema::types::Type;
-use parquet::file::metadata::{ParquetMetaData, RowGroupMetaData, FileMetaData};
-use parquet::record::reader::RowIter;
 use parquet::errors::ParquetError;
+use parquet::file::metadata::{FileMetaData, ParquetMetaData, RowGroupMetaData};
+use parquet::record::reader::RowIter;
+use parquet::schema::types::Type;
 use std::fmt::Formatter;
 
 use async_trait::async_trait;
@@ -54,20 +54,25 @@ pub struct ParquetExec {
     projection: Vec<usize>,
     /// Batch size
     batch_size: usize,
-    row_group_filter: Option<Arc<dyn Fn(&RowGroupMetaData) -> bool + Send + Sync>>
+    row_group_filter: Option<Arc<dyn Fn(&RowGroupMetaData) -> bool + Send + Sync>>,
 }
 
 impl fmt::Debug for ParquetExec {
     fn fmt(&self, f: &mut Formatter<'_>) -> result::Result<(), fmt::Error> {
-        f.write_fmt(format_args!("ParquetExec: {:?} using {:?}, {:?}", self.filenames, self.schema, self.projection))
+        f.write_fmt(format_args!(
+            "ParquetExec: {:?} using {:?}, {:?}",
+            self.filenames, self.schema, self.projection
+        ))
     }
 }
 
 impl ParquetExec {
     /// TODO
-    pub fn try_new(path: &str,
-                   projection: Option<Vec<usize>>,
-                   batch_size: usize) -> Result<Self> {
+    pub fn try_new(
+        path: &str,
+        projection: Option<Vec<usize>>,
+        batch_size: usize,
+    ) -> Result<Self> {
         Self::try_new_with_filter(path, projection, batch_size, None)
     }
 
@@ -76,7 +81,7 @@ impl ParquetExec {
         path: &str,
         projection: Option<Vec<usize>>,
         batch_size: usize,
-        row_group_filter: Option<Arc<dyn Fn(&RowGroupMetaData) -> bool + Send + Sync>>
+        row_group_filter: Option<Arc<dyn Fn(&RowGroupMetaData) -> bool + Send + Sync>>,
     ) -> Result<Self> {
         let mut filenames: Vec<String> = vec![];
         common::build_file_list(path, &mut filenames, ".parquet")?;
@@ -170,7 +175,13 @@ impl ExecutionPlan for ParquetExec {
         let row_group_filter = self.row_group_filter.clone();
 
         thread::spawn(move || {
-            if let Err(e) = read_file(&filename, projection, batch_size, response_tx, row_group_filter) {
+            if let Err(e) = read_file(
+                &filename,
+                projection,
+                batch_size,
+                response_tx,
+                row_group_filter,
+            ) {
                 println!("Parquet reader thread terminated due to error: {:?}", e);
             }
         });
@@ -195,21 +206,19 @@ fn send_result(
 struct FilteredFileReader {
     file_reader: Rc<dyn FileReader>,
     filtered_row_groups: Vec<usize>,
-    filtered_metadata: ParquetMetaData
+    filtered_metadata: ParquetMetaData,
 }
 
 impl FilteredFileReader {
     pub fn new(
         file_reader: Rc<dyn FileReader>,
-        row_group_filter: Arc<dyn Fn(&RowGroupMetaData) -> bool + Send + Sync>
+        row_group_filter: Arc<dyn Fn(&RowGroupMetaData) -> bool + Send + Sync>,
     ) -> FilteredFileReader {
         let filtered_row_groups = (0..file_reader.num_row_groups())
-            .filter(
-                |i| match file_reader.get_row_group(*i) {
-                    Ok(group) => row_group_filter(group.metadata()),
-                    _ => true
-                }
-            )
+            .filter(|i| match file_reader.get_row_group(*i) {
+                Ok(group) => row_group_filter(group.metadata()),
+                _ => true,
+            })
             .collect::<Vec<_>>();
         let file_meta = file_reader.metadata().file_metadata();
         FilteredFileReader {
@@ -222,12 +231,19 @@ impl FilteredFileReader {
                     file_meta.key_value_metadata().clone(),
                     Rc::new(file_meta.schema().clone()),
                     file_meta.schema_descr_ptr(),
-                    file_meta.column_orders().map(|v| v.clone())
+                    file_meta.column_orders().map(|v| v.clone()),
                 ),
-                filtered_row_groups.iter().map(|i| {
-                    let group = file_reader.metadata().row_group(*i);
-                    RowGroupMetaData::from_thrift(group.schema_descr_ptr(), group.to_thrift()).unwrap()
-                }).collect::<Vec<_>>()
+                filtered_row_groups
+                    .iter()
+                    .map(|i| {
+                        let group = file_reader.metadata().row_group(*i);
+                        RowGroupMetaData::from_thrift(
+                            group.schema_descr_ptr(),
+                            group.to_thrift(),
+                        )
+                        .unwrap()
+                    })
+                    .collect::<Vec<_>>(),
             ),
             filtered_row_groups,
         }
@@ -243,7 +259,10 @@ impl FileReader for FilteredFileReader {
         self.filtered_row_groups.len()
     }
 
-    fn get_row_group(&self, i: usize) -> result::Result<Box<dyn RowGroupReader + '_>, ParquetError> {
+    fn get_row_group(
+        &self,
+        i: usize,
+    ) -> result::Result<Box<dyn RowGroupReader + '_>, ParquetError> {
         self.file_reader.get_row_group(self.filtered_row_groups[i])
     }
 
@@ -257,7 +276,7 @@ fn read_file(
     projection: Vec<usize>,
     batch_size: usize,
     response_tx: Sender<Option<ArrowResult<RecordBatch>>>,
-    row_group_filter: Option<Arc<dyn Fn(&RowGroupMetaData) -> bool + Send + Sync>>
+    row_group_filter: Option<Arc<dyn Fn(&RowGroupMetaData) -> bool + Send + Sync>>,
 ) -> Result<()> {
     let file = File::open(&filename)?;
     let mut file_reader: Rc<dyn FileReader> = Arc::new(SerializedFileReader::new(file)?);
