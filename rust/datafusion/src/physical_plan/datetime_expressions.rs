@@ -25,7 +25,7 @@ use arrow::{
     buffer::Buffer,
     datatypes::{DataType, TimeUnit, ToByteSlice},
 };
-use chrono::{prelude::*};
+use chrono::prelude::*;
 use chrono::Duration;
 
 #[inline]
@@ -148,7 +148,9 @@ pub fn string_to_timestamp_nanos(s: &str) -> Result<i64> {
 fn naive_datetime_to_timestamp(_s: &str, datetime: NaiveDateTime) -> Result<i64> {
     let l = Local {};
 
-    Ok(l.from_utc_datetime(&datetime).with_timezone(&Utc).timestamp_nanos())
+    Ok(l.from_utc_datetime(&datetime)
+        .with_timezone(&Utc)
+        .timestamp_nanos())
 }
 
 /// convert an array of strings into `Timestamp(Nanosecond, None)`
@@ -213,26 +215,60 @@ pub fn date_trunc(args: &[ArrayRef]) -> Result<TimestampNanosecondArray> {
             })?;
 
     let range = 0..array.len();
-    let result = range.map(|i| {
-        if array.is_null(i) {
-            Ok(0 as i64)
-        } else {
-            let date_time = match granularity_array.value(i) {
-                "second" => array.value_as_datetime(i).map(|d| d),
-                "minute" => array.value_as_datetime(i).and_then(|d| d.with_second(0)),
-                "hour" => array.value_as_datetime(i).and_then(|d| d.with_second(0)).and_then(|d| d.with_minute(0)),
-                "day" => array.value_as_datetime(i).and_then(|d| d.with_second(0)).and_then(|d| d.with_minute(0)).and_then(|d| d.with_hour(0)),
-                "week" => array.value_as_datetime(i).and_then(|d| d.with_second(0)).and_then(|d| d.with_minute(0)).and_then(|d| d.with_hour(0)).map(|d| d - Duration::seconds(60 * 60 * 24 * d.weekday() as i64)),
-                "month" => array.value_as_datetime(i).and_then(|d| d.with_second(0)).and_then(|d| d.with_minute(0)).and_then(|d| d.with_hour(0)).and_then(|d| d.with_day0(0)),
-                "year" => array.value_as_datetime(i).and_then(|d| d.with_second(0)).and_then(|d| d.with_minute(0)).and_then(|d| d.with_hour(0)).and_then(|d| d.with_day0(0)).and_then(|d| d.with_month0(0)),
-                unsupported => return Err(ExecutionError::ExecutionError(format!("Unsupported date_trunc granularity: {}", unsupported)))
-            };
-            date_time.map(|d| d.timestamp_nanos())
-                .ok_or(
-                    ExecutionError::General(format!("Can't truncate date time: {:?}", array.value_as_datetime(i)))
-                )
-        }
-    }).collect::<Result<Vec<_>>>()?;
+    let result = range
+        .map(|i| {
+            if array.is_null(i) {
+                Ok(0 as i64)
+            } else {
+                let date_time = match granularity_array.value(i) {
+                    "second" => array.value_as_datetime(i).map(|d| d),
+                    "minute" => array.value_as_datetime(i).and_then(|d| d.with_second(0)),
+                    "hour" => array
+                        .value_as_datetime(i)
+                        .and_then(|d| d.with_second(0))
+                        .and_then(|d| d.with_minute(0)),
+                    "day" => array
+                        .value_as_datetime(i)
+                        .and_then(|d| d.with_second(0))
+                        .and_then(|d| d.with_minute(0))
+                        .and_then(|d| d.with_hour(0)),
+                    "week" => array
+                        .value_as_datetime(i)
+                        .and_then(|d| d.with_second(0))
+                        .and_then(|d| d.with_minute(0))
+                        .and_then(|d| d.with_hour(0))
+                        .map(|d| {
+                            d - Duration::seconds(60 * 60 * 24 * d.weekday() as i64)
+                        }),
+                    "month" => array
+                        .value_as_datetime(i)
+                        .and_then(|d| d.with_second(0))
+                        .and_then(|d| d.with_minute(0))
+                        .and_then(|d| d.with_hour(0))
+                        .and_then(|d| d.with_day0(0)),
+                    "year" => array
+                        .value_as_datetime(i)
+                        .and_then(|d| d.with_second(0))
+                        .and_then(|d| d.with_minute(0))
+                        .and_then(|d| d.with_hour(0))
+                        .and_then(|d| d.with_day0(0))
+                        .and_then(|d| d.with_month0(0)),
+                    unsupported => {
+                        return Err(ExecutionError::ExecutionError(format!(
+                            "Unsupported date_trunc granularity: {}",
+                            unsupported
+                        )))
+                    }
+                };
+                date_time
+                    .map(|d| d.timestamp_nanos())
+                    .ok_or(ExecutionError::General(format!(
+                        "Can't truncate date time: {:?}",
+                        array.value_as_datetime(i)
+                    )))
+            }
+        })
+        .collect::<Result<Vec<_>>>()?;
 
     let data = ArrayData::new(
         DataType::Timestamp(TimeUnit::Nanosecond, None),

@@ -19,13 +19,13 @@
 //!
 //! Declares a SQL parser based on sqlparser that handles custom formats that we need.
 
+use sqlparser::ast::ObjectName;
 use sqlparser::{
     ast::{ColumnDef, Statement as SQLStatement, TableConstraint},
     dialect::{keywords::Keyword, Dialect},
     parser::{Parser, ParserError},
     tokenizer::{Token, Tokenizer},
 };
-use sqlparser::ast::ObjectName;
 
 // Use `Parser::expected` instead, if possible
 macro_rules! parser_err {
@@ -59,7 +59,7 @@ pub struct CreateExternalTable {
     /// Path to file
     pub location: String,
     /// Default indexes for table
-    pub indexes: Vec<SQLStatement>
+    pub indexes: Vec<SQLStatement>,
 }
 
 /// DataFusion extension DDL for `EXPLAIN` and `EXPLAIN VERBOSE`
@@ -294,9 +294,13 @@ impl DFParser {
     }
 
     fn parse_create_schema(&mut self) -> Result<Statement, ParserError> {
-        let _ = self.parser.parse_keywords(&[Keyword::IF, Keyword::NOT, Keyword::EXISTS]); // TODO
+        let _ = self
+            .parser
+            .parse_keywords(&[Keyword::IF, Keyword::NOT, Keyword::EXISTS]); // TODO
         let schema_name = self.parser.parse_object_name()?;
-        Ok(Statement::Statement(SQLStatement::CreateSchema { schema_name }))
+        Ok(Statement::Statement(SQLStatement::CreateSchema {
+            schema_name,
+        }))
     }
 
     fn parse_create_external_table(&mut self) -> Result<Statement, ParserError> {
@@ -327,7 +331,7 @@ impl DFParser {
             file_type,
             has_header,
             location,
-            indexes
+            indexes,
         };
         Ok(Statement::CreateExternalTable(create))
     }
@@ -422,7 +426,7 @@ mod tests {
             file_type: FileType::CSV,
             has_header: false,
             location: "foo.csv".into(),
-            indexes: vec![]
+            indexes: vec![],
         });
         expect_parse_ok(sql, expected)?;
 
@@ -434,7 +438,7 @@ mod tests {
             file_type: FileType::Parquet,
             has_header: false,
             location: "foo.parquet".into(),
-            indexes: vec![]
+            indexes: vec![],
         });
         expect_parse_ok(sql, expected)?;
 
