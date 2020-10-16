@@ -1175,8 +1175,12 @@ pub fn numerical_coercion(lhs_type: &DataType, rhs_type: &DataType) -> Option<Da
         (UInt8, _) => Some(UInt8),
         (_, UInt8) => Some(UInt8),
 
-        (Timestamp(TimeUnit::Nanosecond, None), _) => Some(Timestamp(TimeUnit::Nanosecond, None)),
-        (_, Timestamp(TimeUnit::Nanosecond, None)) => Some(Timestamp(TimeUnit::Nanosecond, None)),
+        (Timestamp(TimeUnit::Nanosecond, None), _) => {
+            Some(Timestamp(TimeUnit::Nanosecond, None))
+        }
+        (_, Timestamp(TimeUnit::Nanosecond, None)) => {
+            Some(Timestamp(TimeUnit::Nanosecond, None))
+        }
 
         _ => None,
     }

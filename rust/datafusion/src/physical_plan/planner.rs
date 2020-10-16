@@ -470,7 +470,7 @@ impl DefaultPhysicalPlanner {
         &self,
         e: &Expr,
         input_schema: &Schema,
-        ctx_state: &ExecutionContextState
+        ctx_state: &ExecutionContextState,
     ) -> Result<Arc<dyn AggregateExpr>> {
         // unpack aliased logical expressions, e.g. "sum(col) as total"
         let (name, e) = match e {

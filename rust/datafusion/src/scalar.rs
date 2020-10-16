@@ -19,7 +19,11 @@
 
 use std::{convert::TryFrom, fmt, sync::Arc};
 
-use arrow::array::{Array, BooleanArray, Float32Array, Float64Array, Int16Array, Int32Array, Int64Array, Int8Array, LargeStringArray, ListArray, StringArray, UInt16Array, UInt32Array, UInt64Array, UInt8Array, TimestampMicrosecondArray, TimestampNanosecondArray};
+use arrow::array::{
+    Array, BooleanArray, Float32Array, Float64Array, Int16Array, Int32Array, Int64Array,
+    Int8Array, LargeStringArray, ListArray, StringArray, TimestampMicrosecondArray,
+    TimestampNanosecondArray, UInt16Array, UInt32Array, UInt64Array, UInt8Array,
+};
 use arrow::array::{
     Int16Builder, Int32Builder, Int64Builder, Int8Builder, ListBuilder, UInt16Builder,
     UInt32Builder, UInt64Builder, UInt8Builder,
@@ -64,7 +68,7 @@ pub enum ScalarValue {
     /// Timestamp Microseconds
     TimeMicrosecond(Option<i64>),
     /// Timestamp Microseconds
-    TimeNanosecond(Option<i64>)
+    TimeNanosecond(Option<i64>),
 }
 
 macro_rules! typed_cast {
@@ -120,8 +124,12 @@ impl ScalarValue {
             ScalarValue::Int16(_) => DataType::Int16,
             ScalarValue::Int32(_) => DataType::Int32,
             ScalarValue::Int64(_) => DataType::Int64,
-            ScalarValue::TimeMicrosecond(_) => DataType::Timestamp(TimeUnit::Microsecond, None),
-            ScalarValue::TimeNanosecond(_) => DataType::Timestamp(TimeUnit::Nanosecond, None),
+            ScalarValue::TimeMicrosecond(_) => {
+                DataType::Timestamp(TimeUnit::Microsecond, None)
+            }
+            ScalarValue::TimeNanosecond(_) => {
+                DataType::Timestamp(TimeUnit::Nanosecond, None)
+            }
             ScalarValue::Float32(_) => DataType::Float32,
             ScalarValue::Float64(_) => DataType::Float64,
             ScalarValue::Utf8(_) => DataType::Utf8,
@@ -167,8 +175,12 @@ impl ScalarValue {
             ScalarValue::UInt16(e) => Arc::new(UInt16Array::from(vec![*e])),
             ScalarValue::UInt32(e) => Arc::new(UInt32Array::from(vec![*e])),
             ScalarValue::UInt64(e) => Arc::new(UInt64Array::from(vec![*e])),
-            ScalarValue::TimeMicrosecond(e) => Arc::new(TimestampMicrosecondArray::from(vec![*e])),
-            ScalarValue::TimeNanosecond(e) => Arc::new(TimestampNanosecondArray::from_opt_vec(vec![*e], None)),
+            ScalarValue::TimeMicrosecond(e) => {
+                Arc::new(TimestampMicrosecondArray::from(vec![*e]))
+            }
+            ScalarValue::TimeNanosecond(e) => {
+                Arc::new(TimestampNanosecondArray::from_opt_vec(vec![*e], None))
+            }
             ScalarValue::Utf8(e) => Arc::new(StringArray::from(vec![e.as_deref()])),
             ScalarValue::LargeUtf8(e) => {
                 Arc::new(LargeStringArray::from(vec![e.as_deref()]))
