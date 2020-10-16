@@ -43,7 +43,7 @@ use super::{
 };
 
 use async_trait::async_trait;
-use arrow::array::TimestampMicrosecondArray;
+use arrow::array::{TimestampMicrosecondArray, TimestampNanosecondArray};
 
 /// Hash aggregate modes
 #[derive(Debug, Copy, Clone)]
@@ -608,6 +608,7 @@ fn create_batch_from_map(
                     GroupByScalar::UInt64(n) => Arc::new(UInt64Array::from(vec![*n])),
                     GroupByScalar::Utf8(str) => Arc::new(StringArray::from(vec![&**str])),
                     GroupByScalar::TimeMicrosecond(n) => Arc::new(TimestampMicrosecondArray::from(vec![*n])),
+                    GroupByScalar::TimeNanosecond(n) => Arc::new(TimestampNanosecondArray::from_vec(vec![*n], None)),
                 })
                 .collect::<Vec<ArrayRef>>();
 
@@ -719,6 +720,10 @@ fn create_key(
             DataType::Timestamp(TimeUnit::Microsecond, None) => {
                 let array = col.as_any().downcast_ref::<TimestampMicrosecondArray>().unwrap();
                 vec[i] = GroupByScalar::TimeMicrosecond(array.value(row))
+            }
+            DataType::Timestamp(TimeUnit::Nanosecond, None) => {
+                let array = col.as_any().downcast_ref::<TimestampNanosecondArray>().unwrap();
+                vec[i] = GroupByScalar::TimeNanosecond(array.value(row))
             }
             x => {
                 return Err(ExecutionError::ExecutionError(
