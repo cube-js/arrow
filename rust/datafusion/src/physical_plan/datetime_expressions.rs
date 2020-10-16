@@ -351,17 +351,8 @@ mod tests {
     /// using the local timezone and returns the timestamp in UTC (0
     /// offset)
     fn naive_datetime_to_timestamp(naive_datetime: &NaiveDateTime) -> i64 {
-        // Note: Use chrono APIs that are different than
-        // naive_datetime_to_timestamp to compute the utc offset to
-        // try and double check the logic
-        let utc_offset_secs = match Local.offset_from_local_datetime(&naive_datetime) {
-            LocalResult::Single(local_offset) => {
-                local_offset.fix().local_minus_utc() as i64
-            }
-            _ => panic!("Unexpected failure converting to local datetime"),
-        };
-        let utc_offset_nanos = utc_offset_secs * 1_000_000_000;
-        naive_datetime.timestamp_nanos() - utc_offset_nanos
+        // TODO we always want to use UTC as default timezone
+        naive_datetime.timestamp_nanos()
     }
 
     #[test]
