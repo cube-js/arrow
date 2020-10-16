@@ -678,7 +678,9 @@ impl<'a, S: SchemaProvider> SqlToRel<'a, S> {
                 };
 
                 // finally, user-defined functions (UDF) and UDAF
-                match self.schema_provider.get_function_meta(&name) {
+                match self.schema_provider.get_function_meta(&name).or_else(|| {
+                    self.schema_provider.get_function_meta(&name.to_uppercase())
+                }) {
                     Some(fm) => {
                         let args = function
                             .args
@@ -688,7 +690,12 @@ impl<'a, S: SchemaProvider> SqlToRel<'a, S> {
 
                         Ok(Expr::ScalarUDF { fun: fm, args })
                     }
-                    None => match self.schema_provider.get_aggregate_meta(&name) {
+                    None => match self.schema_provider.get_aggregate_meta(&name).or_else(
+                        || {
+                            self.schema_provider
+                                .get_aggregate_meta(&name.to_uppercase())
+                        },
+                    ) {
                         Some(fm) => {
                             let args = function
                                 .args
