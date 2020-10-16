@@ -47,6 +47,7 @@ use arrow::{
 };
 use fmt::{Debug, Formatter};
 use std::{fmt, str::FromStr, sync::Arc};
+use crate::physical_plan::datetime_expressions::date_trunc;
 
 /// A function's signature, which defines the function's supported argument types.
 #[derive(Debug, Clone)]
@@ -122,7 +123,9 @@ pub enum BuiltinScalarFunction {
     /// construct an array from columns
     Array,
     /// Convert timezone
-    ConvertTz
+    ConvertTz,
+    /// Date truncate
+    DateTrunc
 }
 
 impl fmt::Display for BuiltinScalarFunction {
@@ -157,6 +160,7 @@ impl FromStr for BuiltinScalarFunction {
             "concat" => BuiltinScalarFunction::Concat,
             "to_timestamp" => BuiltinScalarFunction::ToTimestamp,
             "convert_tz" => BuiltinScalarFunction::ConvertTz,
+            "date_trunc" => BuiltinScalarFunction::DateTrunc,
             "array" => BuiltinScalarFunction::Array,
             _ => {
                 return Err(DataFusionError::Plan(format!(
@@ -208,6 +212,9 @@ pub fn return_type(
         BuiltinScalarFunction::ConvertTz => {
             Ok(DataType::Timestamp(TimeUnit::Nanosecond, None))
         }
+        BuiltinScalarFunction::DateTrunc => {
+            Ok(DataType::Timestamp(TimeUnit::Nanosecond, None))
+        }
         BuiltinScalarFunction::Array => Ok(DataType::FixedSizeList(
             Box::new(arg_types[0].clone()),
             arg_types.len() as i32,
@@ -251,6 +258,9 @@ pub fn create_physical_expr(
         BuiltinScalarFunction::ConvertTz => {
             |args| Ok(args[0].clone()) // TODO
         }
+        BuiltinScalarFunction::DateTrunc => {
+            |args| Ok(Arc::new(datetime_expressions::date_trunc(args)?))
+        }
         BuiltinScalarFunction::Array => |args| Ok(array_expressions::array(args)?),
     });
     // coerce
@@ -281,6 +291,7 @@ fn signature(fun: &BuiltinScalarFunction) -> Signature {
         BuiltinScalarFunction::Concat => Signature::Variadic(vec![DataType::Utf8]),
         BuiltinScalarFunction::ToTimestamp => Signature::Uniform(1, vec![DataType::Utf8]),
         BuiltinScalarFunction::ConvertTz => Signature::Exact(vec![DataType::Timestamp(TimeUnit::Nanosecond, None), DataType::Utf8]),
+        BuiltinScalarFunction::DateTrunc => Signature::Exact(vec![DataType::Timestamp(TimeUnit::Nanosecond, None), DataType::Utf8]),
         BuiltinScalarFunction::Array => {
             Signature::Variadic(array_expressions::SUPPORTED_ARRAY_TYPES.to_vec())
         }
