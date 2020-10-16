@@ -26,9 +26,6 @@ use arrow::{
     datatypes::{DataType, TimeUnit, ToByteSlice},
 };
 use chrono::{prelude::*};
-use arrow::array::PrimitiveArrayOps;
-use chrono::naive::MIN_DATETIME;
-use std::ops::{Add, Sub};
 use chrono::Duration;
 
 #[inline]
@@ -193,16 +190,7 @@ pub fn to_timestamp(args: &[ArrayRef]) -> Result<TimestampNanosecondArray> {
     Ok(TimestampNanosecondArray::from(Arc::new(data)))
 }
 
-pub enum DateTruncGranularity {
-    Second,
-    Minute,
-    Hour,
-    Day,
-    Week,
-    Month,
-    Year
-}
-
+/// SQL date_trunc implementation
 pub fn date_trunc(args: &[ArrayRef]) -> Result<TimestampNanosecondArray> {
     let array =
         &args[0]
@@ -224,7 +212,7 @@ pub fn date_trunc(args: &[ArrayRef]) -> Result<TimestampNanosecondArray> {
                 ))
             })?;
 
-    let range = (0..array.len());
+    let range = 0..array.len();
     let result = range.map(|i| {
         if array.is_null(i) {
             Ok(0 as i64)

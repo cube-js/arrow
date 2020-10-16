@@ -47,7 +47,6 @@ use arrow::{
 };
 use fmt::{Debug, Formatter};
 use std::{fmt, str::FromStr, sync::Arc};
-use crate::physical_plan::datetime_expressions::date_trunc;
 
 /// A function's signature, which defines the function's supported argument types.
 #[derive(Debug, Clone)]

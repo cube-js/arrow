@@ -294,7 +294,7 @@ impl DFParser {
     }
 
     fn parse_create_schema(&mut self) -> Result<Statement, ParserError> {
-        self.parser.parse_keywords(&[Keyword::IF, Keyword::NOT, Keyword::EXISTS]);
+        let _ = self.parser.parse_keywords(&[Keyword::IF, Keyword::NOT, Keyword::EXISTS]); // TODO
         let schema_name = self.parser.parse_object_name()?;
         Ok(Statement::Statement(SQLStatement::CreateSchema { schema_name }))
     }
