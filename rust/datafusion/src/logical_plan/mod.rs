@@ -837,6 +837,8 @@ pub enum LogicalPlan {
         projection: Option<Vec<usize>>,
         /// The schema description of the output
         projected_schema: SchemaRef,
+        /// Alias
+        alias: Option<String>,
     },
     /// Produces rows that come from a `Vec` of in memory `RecordBatch`es
     InMemoryScan {
@@ -944,6 +946,32 @@ impl LogicalPlan {
             LogicalPlan::CreateExternalTable { schema, .. } => &schema,
             LogicalPlan::Explain { schema, .. } => &schema,
             LogicalPlan::Extension { node } => &node.schema(),
+        }
+    }
+
+    pub fn aliased_schema(&self) -> HashMap<String, SchemaRef> {
+        match self {
+            LogicalPlan::EmptyRelation { .. } => HashMap::new(),
+            LogicalPlan::InMemoryScan { .. } => HashMap::new(),
+            LogicalPlan::CsvScan { .. } => HashMap::new(),
+            LogicalPlan::ParquetScan { .. } => HashMap::new(),
+            LogicalPlan::TableScan {
+                projected_schema,
+                alias,
+                ..
+            } => alias
+                .as_ref()
+                .iter()
+                .map(|a| (a.to_string(), projected_schema.clone()))
+                .collect(),
+            LogicalPlan::Projection { .. } => HashMap::new(), // TODO
+            LogicalPlan::Filter { input, .. } => input.aliased_schema(),
+            LogicalPlan::Aggregate { .. } => HashMap::new(), // TODO
+            LogicalPlan::Sort { input, .. } => input.aliased_schema(),
+            LogicalPlan::Limit { input, .. } => input.aliased_schema(),
+            LogicalPlan::CreateExternalTable { .. } => HashMap::new(),
+            LogicalPlan::Explain { .. } => HashMap::new(),
+            LogicalPlan::Extension { .. } => HashMap::new(), // TODO
         }
     }
 
@@ -1161,6 +1189,7 @@ impl LogicalPlanBuilder {
         table_name: &str,
         table_schema: &Schema,
         projection: Option<Vec<usize>>,
+        alias: Option<String>,
     ) -> Result<Self> {
         let table_schema = SchemaRef::new(table_schema.clone());
         let projected_schema = projection.clone().map(|p| {
@@ -1175,6 +1204,7 @@ impl LogicalPlanBuilder {
             table_schema,
             projected_schema,
             projection,
+            alias,
         }))
     }
 

@@ -21,8 +21,9 @@ use std::{convert::TryFrom, fmt, sync::Arc};
 
 use arrow::array::{
     Array, BooleanArray, Float32Array, Float64Array, Int16Array, Int32Array, Int64Array,
-    Int8Array, LargeStringArray, ListArray, StringArray, TimestampMicrosecondArray,
-    TimestampNanosecondArray, UInt16Array, UInt32Array, UInt64Array, UInt8Array,
+    Int8Array, LargeStringArray, ListArray, StringArray, StringBuilder,
+    TimestampMicrosecondArray, TimestampNanosecondArray, UInt16Array, UInt32Array,
+    UInt64Array, UInt8Array,
 };
 use arrow::array::{
     Int16Builder, Int32Builder, Int64Builder, Int8Builder, ListBuilder, UInt16Builder,
@@ -81,8 +82,17 @@ macro_rules! typed_cast {
     }};
 }
 
+macro_rules! builder_append {
+    ($builder:ident, $v:ident, Utf8) => {{
+        $builder.values().append_value($v.as_str()).unwrap()
+    }};
+    ($builder:ident, $v:ident, $SCALAR_TY:ident) => {{
+        $builder.values().append_value(*$v).unwrap()
+    }};
+}
+
 macro_rules! build_list {
-    ($VALUE_BUILDER_TY:ident, $SCALAR_TY:ident, $VALUES:expr) => {{
+    ($VALUE_BUILDER_TY:ident, $SCALAR_TY:tt, $VALUES:expr) => {{
         match $VALUES {
             None => {
                 let mut builder = ListBuilder::new($VALUE_BUILDER_TY::new(0));
@@ -95,7 +105,7 @@ macro_rules! build_list {
                 for scalar_value in values {
                     match scalar_value {
                         ScalarValue::$SCALAR_TY(Some(v)) => {
-                            builder.values().append_value(*v).unwrap()
+                            builder_append!(builder, v, $SCALAR_TY)
                         }
                         ScalarValue::$SCALAR_TY(None) => {
                             builder.values().append_null().unwrap();
@@ -194,7 +204,8 @@ impl ScalarValue {
                 DataType::UInt16 => build_list!(UInt16Builder, UInt16, values),
                 DataType::UInt32 => build_list!(UInt32Builder, UInt32, values),
                 DataType::UInt64 => build_list!(UInt64Builder, UInt64, values),
-                _ => panic!("Unexpected DataType for list"),
+                DataType::Utf8 => build_list!(StringBuilder, Utf8, values),
+                x => panic!("Unexpected DataType for list: {:?}", x),
             }),
         }
     }
