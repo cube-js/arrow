@@ -32,7 +32,7 @@ use crate::physical_plan::filter::FilterExec;
 use crate::physical_plan::hash_aggregate::{AggregateMode, HashAggregateExec};
 use crate::physical_plan::limit::{GlobalLimitExec, LocalLimitExec};
 use crate::physical_plan::memory::MemoryExec;
-use crate::physical_plan::merge::MergeExec;
+use crate::physical_plan::merge::{MergeExec, UnionExec};
 use crate::physical_plan::parquet::ParquetExec;
 use crate::physical_plan::projection::ProjectionExec;
 use crate::physical_plan::sort::SortExec;
@@ -283,6 +283,15 @@ impl DefaultPhysicalPlanner {
             }
             LogicalPlan::EmptyRelation { schema } => {
                 Ok(Arc::new(EmptyExec::new(Arc::new(schema.as_ref().clone()))))
+            }
+            LogicalPlan::Union { inputs, .. } => {
+                let physical_plans = inputs
+                    .iter()
+                    .map(|input| self.create_physical_plan(input, ctx_state))
+                    .collect::<Result<Vec<_>>>()?;
+                Ok(Arc::new(MergeExec::new(Arc::new(UnionExec::new(
+                    physical_plans,
+                )))))
             }
             LogicalPlan::Limit { input, n, .. } => {
                 let limit = *n;

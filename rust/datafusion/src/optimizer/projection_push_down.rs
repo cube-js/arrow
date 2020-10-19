@@ -315,7 +315,8 @@ fn optimize_plan(
         | LogicalPlan::EmptyRelation { .. }
         | LogicalPlan::Sort { .. }
         | LogicalPlan::CreateExternalTable { .. }
-        | LogicalPlan::Extension { .. } => {
+        | LogicalPlan::Extension { .. }
+        | LogicalPlan::Union { .. } => {
             let expr = utils::expressions(plan);
             // collect all required columns by this plan
             let mut new_required_columns = required_columns.clone();
