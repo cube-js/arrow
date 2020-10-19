@@ -102,6 +102,15 @@ pub enum LogicalPlan {
         /// The incoming logical plan
         input: Arc<LogicalPlan>,
     },
+    /// Union multiple inputs
+    Union {
+        /// Inputs to merge
+        inputs: Vec<Arc<LogicalPlan>>,
+        /// Union schema. Should be the same for all inputs.
+        schema: SchemaRef,
+        /// Union select alias
+        alias: Option<String>,
+    },
     /// Join two logical plans on one or more join columns
     Join {
         /// Left input
@@ -239,6 +248,7 @@ impl LogicalPlan {
             LogicalPlan::CreateExternalTable { schema, .. } => &schema,
             LogicalPlan::Explain { schema, .. } => &schema,
             LogicalPlan::Extension { node } => &node.schema(),
+            LogicalPlan::Union { schema, .. } => &schema,
         }
     }
 
@@ -266,7 +276,16 @@ impl LogicalPlan {
             LogicalPlan::CreateExternalTable { .. } => HashMap::new(),
             LogicalPlan::Explain { .. } => HashMap::new(),
             LogicalPlan::Extension { .. } => HashMap::new(), // TODO
-            LogicalPlan::Join { left, right, .. } => left.aliased_schema().into_iter().chain(right.aliased_schema()).collect()
+            LogicalPlan::Join { left, right, .. } => left.aliased_schema().into_iter().chain(right.aliased_schema()).collect(),
+            LogicalPlan::Union {
+                alias,
+                schema,
+                ..
+            } => alias
+                .as_ref()
+                .iter()
+                .map(|a| (a.to_string(), schema.clone()))
+                .collect(),
         }
     }
 
@@ -346,6 +365,11 @@ impl LogicalPlan {
             LogicalPlan::Sort { input, .. } => input.accept(visitor)?,
             LogicalPlan::Join { left, right, .. } => {
                 left.accept(visitor)? && right.accept(visitor)?
+            }
+            LogicalPlan::Union { inputs, .. } => {
+                inputs.iter().map(|input| input.accept(visitor))
+                    .collect::<Result<Vec<bool>, V::Error>>()?
+                    .into_iter().all(|b| b)
             }
             LogicalPlan::Limit { input, .. } => input.accept(visitor)?,
             LogicalPlan::Extension { node } => {
@@ -621,6 +645,13 @@ impl LogicalPlan {
                     }
                     LogicalPlan::Explain { .. } => write!(f, "Explain"),
                     LogicalPlan::Extension { ref node } => node.fmt_for_explain(f),
+                    LogicalPlan::Union { .. } => {
+                        write!(f, "Union")?;
+                        // for input in inputs.iter() {
+                        //     input.fmt_for_explain(f)?
+                        // }
+                        Ok(())
+                    }
                 }
             }
         }
