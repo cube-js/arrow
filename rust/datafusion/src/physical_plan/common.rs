@@ -30,7 +30,7 @@ use array::{
     Int8Array, LargeStringArray, StringArray, UInt16Array, UInt32Array, UInt64Array,
     UInt8Array,
 };
-use arrow::array::{TimestampMicrosecondArray, TimestampNanosecondArray};
+use arrow::array::{TimestampNanosecondArray};
 use arrow::datatypes::{DataType, SchemaRef, TimeUnit};
 use arrow::error::Result as ArrowResult;
 use arrow::record_batch::RecordBatch;

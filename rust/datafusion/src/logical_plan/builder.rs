@@ -114,6 +114,7 @@ impl LogicalPlanBuilder {
         table_name: &str,
         table_schema: &Schema,
         projection: Option<Vec<usize>>,
+        alias: Option<String>,
     ) -> Result<Self> {
         let table_schema = SchemaRef::new(table_schema.clone());
         let projected_schema = projection.clone().map(|p| {
@@ -128,6 +129,7 @@ impl LogicalPlanBuilder {
             table_schema,
             projected_schema,
             projection,
+            alias,
         }))
     }
 
@@ -307,6 +309,7 @@ mod tests {
             "employee.csv",
             &employee_schema(),
             Some(vec![0, 3]),
+            None
         )?
         .filter(col("state").eq(lit("CO")))?
         .project(vec![col("id")])?
@@ -348,6 +351,7 @@ mod tests {
             "employee.csv",
             &employee_schema(),
             Some(vec![3, 4]),
+            None
         )?
         .aggregate(
             vec![col("state")],
@@ -372,6 +376,7 @@ mod tests {
             "employee.csv",
             &employee_schema(),
             Some(vec![3, 4]),
+            None
         )?
         .sort(vec![
             Expr::Sort {
@@ -402,6 +407,7 @@ mod tests {
             "employee.csv",
             &employee_schema(),
             Some(vec![0, 3]),
+            None
         )?
         // two columns with the same name => error
         .project(vec![col("id"), col("first_name").alias("id")]);
@@ -426,6 +432,7 @@ mod tests {
             "employee.csv",
             &employee_schema(),
             Some(vec![0, 3]),
+            None
         )?
         // two columns with the same name => error
         .aggregate(vec![col("state")], vec![sum(col("salary")).alias("state")]);
