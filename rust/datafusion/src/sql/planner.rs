@@ -41,7 +41,7 @@ use super::parser::ExplainPlan;
 use crate::prelude::JoinType;
 use sqlparser::ast::{
     BinaryOperator, DataType as SQLDataType, Expr as SQLExpr, Join, JoinConstraint,
-    JoinOperator, Query, Select, SelectItem, SetExpr, TableFactor, TableWithJoins,
+    JoinOperator, Query, Select, SelectItem, SetExpr, SetOperator, TableFactor, TableWithJoins,
     UnaryOperator, Value,
 };
 use sqlparser::ast::{ColumnDef as SQLColumnDef, ColumnOption};
@@ -91,19 +91,72 @@ impl<'a, S: SchemaProvider> SqlToRel<'a, S> {
         }
     }
 
+    fn query_to_plan(&self, query: &Query) -> Result<LogicalPlan> {
+        self.query_to_plan_with_alias(query, &None)
+    }
+
     /// Generate a logic plan from an SQL query
-    pub fn query_to_plan(&self, query: &Query) -> Result<LogicalPlan> {
-        let plan = match &query.body {
-            SetExpr::Select(s) => self.select_to_plan(s.as_ref()),
-            _ => Err(DataFusionError::NotImplemented(format!(
-                "Query {} not implemented yet",
-                query.body
-            ))),
-        }?;
+    pub fn query_to_plan_with_alias(
+        &self,
+        query: &Query,
+        alias: &Option<String>,
+    ) -> Result<LogicalPlan> {
+        let set_expr = &query.body;
+        let plan = self.set_expr_to_plan(set_expr, alias)?;
 
         let plan = self.order_by(&plan, &query.order_by)?;
 
         self.limit(&plan, &query.limit)
+    }
+
+    fn set_expr_to_plan(
+        &self,
+        set_expr: &SetExpr,
+        alias: &Option<String>,
+    ) -> Result<LogicalPlan> {
+        match set_expr {
+            SetExpr::Select(s) => self.select_to_plan(s.as_ref()),
+            SetExpr::SetOperation {
+                op,
+                left,
+                right,
+                all,
+            } => match (op, all) {
+                (SetOperator::Union, true) => {
+                    let left_plan = self.set_expr_to_plan(left.as_ref(), &None)?;
+                    let right_plan = self.set_expr_to_plan(right.as_ref(), &None)?;
+                    let inputs = vec![left_plan, right_plan]
+                        .into_iter()
+                        .flat_map(|p| match p {
+                            LogicalPlan::Union { inputs, .. } => inputs.clone(),
+                            x => vec![Arc::new(x)],
+                        })
+                        .collect::<Vec<_>>();
+                    if inputs.len() == 0 {
+                        return Err(DataFusionError::Execution(format!(
+                            "Empty UNION: {}",
+                            set_expr
+                        )));
+                    }
+                    if !inputs.iter().all(|s| s.schema() == inputs[0].schema()) {
+                        return Err(DataFusionError::Execution(format!(
+                            "UNION ALL schema expected to be the same across selects"
+                        )));
+                    }
+                    Ok(LogicalPlan::Union {
+                        schema: inputs[0].schema().clone(),
+                        inputs,
+                        alias: alias.clone(),
+                    })
+                }
+                _ => Err(DataFusionError::NotImplemented(
+                    format!("Only UNION ALL is supported: {}", set_expr).to_owned(),
+                )),
+            },
+            _ => Err(DataFusionError::NotImplemented(
+                format!("Query {} not implemented yet", set_expr).to_owned(),
+            )),
+        }
     }
 
     /// Generate a logical plan from a CREATE EXTERNAL TABLE statement
@@ -322,7 +375,12 @@ impl<'a, S: SchemaProvider> SqlToRel<'a, S> {
                     ))),
                 }
             }
-            TableFactor::Derived { subquery, .. } => self.query_to_plan(subquery),
+            TableFactor::Derived {
+                subquery, alias, ..
+            } => self.query_to_plan_with_alias(
+                &subquery,
+                &alias.as_ref().map(|a| a.name.value.to_string()),
+            ),
             TableFactor::NestedJoin(table_with_joins) => {
                 self.plan_table_with_joins(table_with_joins)
             }
