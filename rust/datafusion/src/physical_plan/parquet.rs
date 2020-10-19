@@ -93,7 +93,13 @@ impl ParquetExec {
             let mut arrow_reader = ParquetFileArrowReader::new(file_reader);
             let schema = arrow_reader.get_schema()?;
 
-            Ok(Self::new(filenames, schema, projection, batch_size))
+            Ok(Self::new(
+                filenames,
+                schema,
+                projection,
+                batch_size,
+                row_group_filter,
+            ))
         }
     }
 
@@ -103,6 +109,7 @@ impl ParquetExec {
         schema: Schema,
         projection: Option<Vec<usize>>,
         batch_size: usize,
+        row_group_filter: Option<Arc<dyn Fn(&RowGroupMetaData) -> bool + Send + Sync>>,
     ) -> Self {
         let projection = match projection {
             Some(p) => p,
@@ -204,14 +211,14 @@ fn send_result(
 }
 
 struct FilteredFileReader {
-    file_reader: Rc<dyn FileReader>,
+    file_reader: Arc<dyn FileReader>,
     filtered_row_groups: Vec<usize>,
     filtered_metadata: ParquetMetaData,
 }
 
 impl FilteredFileReader {
     pub fn new(
-        file_reader: Rc<dyn FileReader>,
+        file_reader: Arc<dyn FileReader>,
         row_group_filter: Arc<dyn Fn(&RowGroupMetaData) -> bool + Send + Sync>,
     ) -> FilteredFileReader {
         let filtered_row_groups = (0..file_reader.num_row_groups())
@@ -229,7 +236,6 @@ impl FilteredFileReader {
                     file_meta.num_rows(),
                     file_meta.created_by().clone(),
                     file_meta.key_value_metadata().clone(),
-                    Rc::new(file_meta.schema().clone()),
                     file_meta.schema_descr_ptr(),
                     file_meta.column_orders().map(|v| v.clone()),
                 ),
@@ -279,9 +285,9 @@ fn read_file(
     row_group_filter: Option<Arc<dyn Fn(&RowGroupMetaData) -> bool + Send + Sync>>,
 ) -> Result<()> {
     let file = File::open(&filename)?;
-    let mut file_reader: Rc<dyn FileReader> = Arc::new(SerializedFileReader::new(file)?);
+    let mut file_reader: Arc<dyn FileReader> = Arc::new(SerializedFileReader::new(file)?);
     if let Some(filter) = row_group_filter {
-        file_reader = Rc::new(FilteredFileReader::new(file_reader, filter));
+        file_reader = Arc::new(FilteredFileReader::new(file_reader, filter));
     }
     let mut arrow_reader = ParquetFileArrowReader::new(file_reader);
     let mut batch_reader =

@@ -145,6 +145,13 @@ where
 }
 
 #[inline]
+fn concat_string_list(array_data_list: &[ArrayDataRef]) -> Result<ArrayRef> {
+    let mut builder = ListBuilder::new(StringBuilder::new(0));
+    builder.append_data(array_data_list)?;
+    Ok(ArrayBuilder::finish(&mut builder))
+}
+
+#[inline]
 fn concat_list(
     array_data_list: &[ArrayDataRef],
     data_type: &DataType,
@@ -158,6 +165,7 @@ fn concat_list(
         DataType::UInt16 => concat_primitive_list::<UInt16Type>(array_data_list),
         DataType::UInt32 => concat_primitive_list::<UInt32Type>(array_data_list),
         DataType::UInt64 => concat_primitive_list::<UInt64Type>(array_data_list),
+        DataType::Utf8 => concat_string_list(array_data_list),
         t => Err(ArrowError::ComputeError(format!(
             "Concat not supported for list with data type {:?}",
             t

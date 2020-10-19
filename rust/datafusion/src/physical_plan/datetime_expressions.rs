@@ -199,7 +199,7 @@ pub fn date_trunc(args: &[ArrayRef]) -> Result<TimestampNanosecondArray> {
             .as_any()
             .downcast_ref::<TimestampNanosecondArray>()
             .ok_or_else(|| {
-                ExecutionError::General(format!(
+                DataFusionError::Execution(format!(
                     "Internal error: could not cast date_trunc array input to TimestampNanosecondArray"
                 ))
             })?;
@@ -209,7 +209,7 @@ pub fn date_trunc(args: &[ArrayRef]) -> Result<TimestampNanosecondArray> {
             .as_any()
             .downcast_ref::<StringArray>()
             .ok_or_else(|| {
-                ExecutionError::General(format!(
+                DataFusionError::Execution(format!(
                     "Internal error: could not cast date_trunc granularity input to StringArray"
                 ))
             })?;
@@ -254,7 +254,7 @@ pub fn date_trunc(args: &[ArrayRef]) -> Result<TimestampNanosecondArray> {
                         .and_then(|d| d.with_day0(0))
                         .and_then(|d| d.with_month0(0)),
                     unsupported => {
-                        return Err(ExecutionError::ExecutionError(format!(
+                        return Err(DataFusionError::Execution(format!(
                             "Unsupported date_trunc granularity: {}",
                             unsupported
                         )))
@@ -262,7 +262,7 @@ pub fn date_trunc(args: &[ArrayRef]) -> Result<TimestampNanosecondArray> {
                 };
                 date_time
                     .map(|d| d.timestamp_nanos())
-                    .ok_or(ExecutionError::General(format!(
+                    .ok_or(DataFusionError::Execution(format!(
                         "Can't truncate date time: {:?}",
                         array.value_as_datetime(i)
                     )))

@@ -31,6 +31,7 @@ use crate::sql::parser::FileType;
 use super::display::{GraphvizVisitor, IndentVisitor};
 use super::expr::Expr;
 use super::extension::UserDefinedLogicalNode;
+use std::collections::HashMap;
 
 /// Describes the source of the table, either registered on the context or by reference
 #[derive(Clone)]
@@ -126,6 +127,8 @@ pub enum LogicalPlan {
         projection: Option<Vec<usize>>,
         /// The schema description of the output
         projected_schema: SchemaRef,
+        /// Alias
+        alias: Option<String>,
     },
     /// Produces rows that come from a `Vec` of in memory `RecordBatch`es
     InMemoryScan {
@@ -236,6 +239,34 @@ impl LogicalPlan {
             LogicalPlan::CreateExternalTable { schema, .. } => &schema,
             LogicalPlan::Explain { schema, .. } => &schema,
             LogicalPlan::Extension { node } => &node.schema(),
+        }
+    }
+
+    /// Get schema by relation alias
+    pub fn aliased_schema(&self) -> HashMap<String, SchemaRef> {
+        match self {
+            LogicalPlan::EmptyRelation { .. } => HashMap::new(),
+            LogicalPlan::InMemoryScan { .. } => HashMap::new(),
+            LogicalPlan::CsvScan { .. } => HashMap::new(),
+            LogicalPlan::ParquetScan { .. } => HashMap::new(),
+            LogicalPlan::TableScan {
+                projected_schema,
+                alias,
+                ..
+            } => alias
+                .as_ref()
+                .iter()
+                .map(|a| (a.to_string(), projected_schema.clone()))
+                .collect(),
+            LogicalPlan::Projection { .. } => HashMap::new(), // TODO
+            LogicalPlan::Filter { input, .. } => input.aliased_schema(),
+            LogicalPlan::Aggregate { .. } => HashMap::new(), // TODO
+            LogicalPlan::Sort { input, .. } => input.aliased_schema(),
+            LogicalPlan::Limit { input, .. } => input.aliased_schema(),
+            LogicalPlan::CreateExternalTable { .. } => HashMap::new(),
+            LogicalPlan::Explain { .. } => HashMap::new(),
+            LogicalPlan::Extension { .. } => HashMap::new(), // TODO
+            LogicalPlan::Join { left, right, .. } => left.aliased_schema().into_iter().chain(right.aliased_schema()).collect()
         }
     }
 
@@ -363,7 +394,7 @@ impl LogicalPlan {
     /// let schema = Schema::new(vec![
     ///     Field::new("id", DataType::Int32, false),
     /// ]);
-    /// let plan = LogicalPlanBuilder::scan("default", "foo.csv", &schema, None).unwrap()
+    /// let plan = LogicalPlanBuilder::scan("default", "foo.csv", &schema, None, None).unwrap()
     ///     .filter(col("id").eq(lit(5))).unwrap()
     ///     .build().unwrap();
     ///
@@ -404,7 +435,7 @@ impl LogicalPlan {
     /// let schema = Schema::new(vec![
     ///     Field::new("id", DataType::Int32, false),
     /// ]);
-    /// let plan = LogicalPlanBuilder::scan("default", "foo.csv", &schema, None).unwrap()
+    /// let plan = LogicalPlanBuilder::scan("default", "foo.csv", &schema, None, None).unwrap()
     ///     .filter(col("id").eq(lit(5))).unwrap()
     ///     .build().unwrap();
     ///
@@ -444,7 +475,7 @@ impl LogicalPlan {
     /// let schema = Schema::new(vec![
     ///     Field::new("id", DataType::Int32, false),
     /// ]);
-    /// let plan = LogicalPlanBuilder::scan("default", "foo.csv", &schema, None).unwrap()
+    /// let plan = LogicalPlanBuilder::scan("default", "foo.csv", &schema, None, None).unwrap()
     ///     .filter(col("id").eq(lit(5))).unwrap()
     ///     .build().unwrap();
     ///
@@ -503,7 +534,7 @@ impl LogicalPlan {
     /// let schema = Schema::new(vec![
     ///     Field::new("id", DataType::Int32, false),
     /// ]);
-    /// let plan = LogicalPlanBuilder::scan("default", "foo.csv", &schema, None).unwrap()
+    /// let plan = LogicalPlanBuilder::scan("default", "foo.csv", &schema, None, None).unwrap()
     ///     .build().unwrap();
     ///
     /// // Format using display
@@ -676,6 +707,7 @@ mod tests {
             "employee.csv",
             &employee_schema(),
             Some(vec![0, 3]),
+            None
         )
         .unwrap()
         .filter(col("state").eq(lit("CO")))
@@ -969,7 +1001,7 @@ mod tests {
     fn test_plan() -> LogicalPlan {
         let schema = Schema::new(vec![Field::new("id", DataType::Int32, false)]);
 
-        LogicalPlanBuilder::scan("default", "employee.csv", &schema, Some(vec![0]))
+        LogicalPlanBuilder::scan("default", "employee.csv", &schema, Some(vec![0]), None)
             .unwrap()
             .filter(col("state").eq(lit("CO")))
             .unwrap()

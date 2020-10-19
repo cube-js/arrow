@@ -46,6 +46,7 @@ use sqlparser::ast::{
 };
 use sqlparser::ast::{ColumnDef as SQLColumnDef, ColumnOption};
 use sqlparser::ast::{OrderByExpr, Statement};
+use std::collections::HashMap;
 use sqlparser::parser::ParserError::ParserError;
 
 /// The SchemaProvider trait allows the query planner to obtain meta-data about tables and
@@ -256,7 +257,7 @@ impl<'a, S: SchemaProvider> SqlToRel<'a, S> {
                             create_join_schema(left.schema(), &right.schema())?;
 
                         // parse ON expression
-                        let expr = self.sql_to_rex(sql_expr, &join_schema)?;
+                        let expr = self.sql_to_rex(sql_expr, &join_schema, &left.aliased_schema())?;
 
                         // extract join keys
                         extract_join_keys(&expr, &mut keys)?;
@@ -293,7 +294,7 @@ impl<'a, S: SchemaProvider> SqlToRel<'a, S> {
 
     fn create_relation(&self, relation: &TableFactor) -> Result<LogicalPlan> {
         match relation {
-            TableFactor::Table { name, .. } => {
+            TableFactor::Table { name, alias, .. } => {
                 let table_name = name.to_string();
                 match self.schema_provider.get_table_meta(&table_name) {
                     Some(schema) => LogicalPlanBuilder::scan(
@@ -301,6 +302,7 @@ impl<'a, S: SchemaProvider> SqlToRel<'a, S> {
                         &table_name,
                         schema.as_ref(),
                         None,
+                        alias.as_ref().map(|i| i.name.value.to_string()),
                     )?
                     .build(),
                     None => Err(DataFusionError::Plan(format!(
@@ -332,7 +334,7 @@ impl<'a, S: SchemaProvider> SqlToRel<'a, S> {
         let projection_expr: Vec<Expr> = select
             .projection
             .iter()
-            .map(|e| self.sql_select_to_rex(&e, &plan.schema()))
+            .map(|e| self.sql_select_to_rex(&e, &plan.schema(), &plan.aliased_schema()))
             .collect::<Result<Vec<Expr>>>()?;
 
         let aggr_expr: Vec<Expr> = projection_expr
@@ -358,7 +360,11 @@ impl<'a, S: SchemaProvider> SqlToRel<'a, S> {
     ) -> Result<LogicalPlan> {
         match *predicate {
             Some(ref predicate_expr) => LogicalPlanBuilder::from(&plan)
-                .filter(self.sql_to_rex(predicate_expr, &plan.schema())?)?
+                .filter(self.sql_to_rex(
+                    predicate_expr,
+                    &plan.schema(),
+                    &plan.aliased_schema(),
+                )?)?
                 .build(),
             _ => Ok(plan.clone()),
         }
@@ -385,17 +391,17 @@ impl<'a, S: SchemaProvider> SqlToRel<'a, S> {
                         Ok(n) => {
                             if n - 1 < projection_expr.len() && n >= 1 {
                                 if is_aggregate_expr(&projection_expr[n - 1]) {
-                                    Err(ExecutionError::General(format!("Can't group by aggregate function: {:?}", projection_expr[n - 1])))
+                                    Err(DataFusionError::Execution(format!("Can't group by aggregate function: {:?}", projection_expr[n - 1])))
                                 } else {
                                     Ok(projection_expr[n - 1].clone())
                                 }
                             } else {
-                                Err(ExecutionError::General(format!("Select column reference should be within 1..{} but found {}", projection_expr.len(), n)))
+                                Err(DataFusionError::Execution(format!("Select column reference should be within 1..{} but found {}", projection_expr.len(), n)))
                             }
                         },
-                        Err(_) => Err(ExecutionError::General(format!("Can't parse {} as number", n))),
+                        Err(_) => Err(DataFusionError::Execution(format!("Can't parse {} as number", n))),
                     }
-                    _ => self.sql_to_rex(&e, &input.schema())
+                    _ => self.sql_to_rex(&e, &input.schema(), &input.aliased_schema())
                 }
             })
             .collect::<Result<Vec<Expr>>>()?;
@@ -441,7 +447,11 @@ impl<'a, S: SchemaProvider> SqlToRel<'a, S> {
     fn limit(&self, input: &LogicalPlan, limit: &Option<SQLExpr>) -> Result<LogicalPlan> {
         match *limit {
             Some(ref limit_expr) => {
-                let n = match self.sql_to_rex(&limit_expr, &input.schema())? {
+                let n = match self.sql_to_rex(
+                    &limit_expr,
+                    &input.schema(),
+                    &input.aliased_schema(),
+                )? {
                     Expr::Literal(ScalarValue::Int64(Some(n))) => Ok(n as usize),
                     _ => Err(DataFusionError::Plan(
                         "Unexpected expression for LIMIT clause".to_string(),
@@ -469,7 +479,10 @@ impl<'a, S: SchemaProvider> SqlToRel<'a, S> {
             .iter()
             .map(|e| {
                 Ok(Expr::Sort {
-                    expr: Box::new(self.sql_to_rex(&e.expr, &input_schema).unwrap()),
+                    expr: Box::new(
+                        self.sql_to_rex(&e.expr, &input_schema, &plan.aliased_schema())
+                            .unwrap(),
+                    ),
                     // by default asc
                     asc: e.asc.unwrap_or(true),
                     // by default nulls first to be consistent with spark
@@ -482,11 +495,18 @@ impl<'a, S: SchemaProvider> SqlToRel<'a, S> {
     }
 
     /// Generate a relational expression from a select SQL expression
-    fn sql_select_to_rex(&self, sql: &SelectItem, schema: &Schema) -> Result<Expr> {
+    fn sql_select_to_rex(
+        &self,
+        sql: &SelectItem,
+        schema: &Schema,
+        aliased_schema: &HashMap<String, SchemaRef>,
+    ) -> Result<Expr> {
         match sql {
-            SelectItem::UnnamedExpr(expr) => self.sql_to_rex(expr, schema),
+            SelectItem::UnnamedExpr(expr) => {
+                self.sql_to_rex(expr, schema, aliased_schema)
+            }
             SelectItem::ExprWithAlias { expr, alias } => Ok(Alias(
-                Box::new(self.sql_to_rex(&expr, schema)?),
+                Box::new(self.sql_to_rex(&expr, schema, aliased_schema)?),
                 alias.value.clone(),
             )),
             SelectItem::Wildcard => Ok(Expr::Wildcard),
@@ -497,7 +517,12 @@ impl<'a, S: SchemaProvider> SqlToRel<'a, S> {
     }
 
     /// Generate a relational expression from a SQL expression
-    pub fn sql_to_rex(&self, sql: &SQLExpr, schema: &Schema) -> Result<Expr> {
+    pub fn sql_to_rex(
+        &self,
+        sql: &SQLExpr,
+        schema: &Schema,
+        aliased_schema: &HashMap<String, SchemaRef>,
+    ) -> Result<Expr> {
         match sql {
             SQLExpr::Value(Value::Number(n)) => match n.parse::<i64>() {
                 Ok(n) => Ok(lit(n)),
@@ -529,11 +554,20 @@ impl<'a, S: SchemaProvider> SqlToRel<'a, S> {
                 }
                 if &var_names[0][0..1] == "@" {
                     Ok(Expr::ScalarVariable(var_names))
+                } else if aliased_schema.contains_key(&var_names[0]) {
+                    match schema.field_with_name(&var_names[1]) {
+                        Ok(field) => Ok(Expr::Column(field.name().clone())),
+                        Err(_) => Err(DataFusionError::Execution(format!(
+                            "Invalid identifier '{}' for schema {}",
+                            &var_names[1],
+                            schema.to_string()
+                        ))),
+                    }
                 } else {
                     Err(DataFusionError::Plan(format!(
-                        "Invalid compound identifier '{:?}' for schema {}",
+                        "Invalid compound identifier '{:?}'. Alias not found among: {:?}",
                         var_names,
-                        schema.to_string()
+                        aliased_schema.keys().collect::<Vec<_>>()
                     )))
                 }
             }
@@ -547,20 +581,20 @@ impl<'a, S: SchemaProvider> SqlToRel<'a, S> {
                 else_result,
             } => {
                 let expr = if let Some(e) = operand {
-                    Some(Box::new(self.sql_to_rex(e, schema)?))
+                    Some(Box::new(self.sql_to_rex(e, schema, aliased_schema)?))
                 } else {
                     None
                 };
                 let when_expr = conditions
                     .iter()
-                    .map(|e| self.sql_to_rex(e, schema))
+                    .map(|e| self.sql_to_rex(e, schema, aliased_schema))
                     .collect::<Result<Vec<_>>>()?;
                 let then_expr = results
                     .iter()
-                    .map(|e| self.sql_to_rex(e, schema))
+                    .map(|e| self.sql_to_rex(e, schema, aliased_schema))
                     .collect::<Result<Vec<_>>>()?;
                 let else_expr = if let Some(e) = else_result {
-                    Some(Box::new(self.sql_to_rex(e, schema)?))
+                    Some(Box::new(self.sql_to_rex(e, schema, aliased_schema)?))
                 } else {
                     None
                 };
@@ -580,22 +614,26 @@ impl<'a, S: SchemaProvider> SqlToRel<'a, S> {
                 ref expr,
                 ref data_type,
             } => Ok(Expr::Cast {
-                expr: Box::new(self.sql_to_rex(&expr, schema)?),
+                expr: Box::new(self.sql_to_rex(&expr, schema, aliased_schema)?),
                 data_type: convert_data_type(data_type)?,
             }),
 
-            SQLExpr::IsNull(ref expr) => {
-                Ok(Expr::IsNull(Box::new(self.sql_to_rex(expr, schema)?)))
-            }
+            SQLExpr::IsNull(ref expr) => Ok(Expr::IsNull(Box::new(self.sql_to_rex(
+                expr,
+                schema,
+                aliased_schema,
+            )?))),
 
-            SQLExpr::IsNotNull(ref expr) => {
-                Ok(Expr::IsNotNull(Box::new(self.sql_to_rex(expr, schema)?)))
-            }
+            SQLExpr::IsNotNull(ref expr) => Ok(Expr::IsNotNull(Box::new(
+                self.sql_to_rex(expr, schema, aliased_schema)?,
+            ))),
 
             SQLExpr::UnaryOp { ref op, ref expr } => match *op {
-                UnaryOperator::Not => {
-                    Ok(Expr::Not(Box::new(self.sql_to_rex(expr, schema)?)))
-                }
+                UnaryOperator::Not => Ok(Expr::Not(Box::new(self.sql_to_rex(
+                    expr,
+                    schema,
+                    aliased_schema,
+                )?))),
                 _ => Err(DataFusionError::Internal(format!(
                     "SQL binary operator cannot be interpreted as a unary operator"
                 ))),
@@ -629,9 +667,9 @@ impl<'a, S: SchemaProvider> SqlToRel<'a, S> {
                 }?;
 
                 Ok(Expr::BinaryExpr {
-                    left: Box::new(self.sql_to_rex(&left, &schema)?),
+                    left: Box::new(self.sql_to_rex(&left, &schema, aliased_schema)?),
                     op: operator,
-                    right: Box::new(self.sql_to_rex(&right, &schema)?),
+                    right: Box::new(self.sql_to_rex(&right, &schema, aliased_schema)?),
                 })
             }
 
@@ -644,7 +682,7 @@ impl<'a, S: SchemaProvider> SqlToRel<'a, S> {
                     let args = function
                         .args
                         .iter()
-                        .map(|a| self.sql_to_rex(a, schema))
+                        .map(|a| self.sql_to_rex(a, schema, aliased_schema))
                         .collect::<Result<Vec<Expr>>>()?;
 
                     return Ok(Expr::ScalarFunction { fun, args });
@@ -659,14 +697,14 @@ impl<'a, S: SchemaProvider> SqlToRel<'a, S> {
                             .map(|a| match a {
                                 SQLExpr::Value(Value::Number(_)) => Ok(lit(1_u8)),
                                 SQLExpr::Wildcard => Ok(lit(1_u8)),
-                                _ => self.sql_to_rex(a, schema),
+                                _ => self.sql_to_rex(a, schema, aliased_schema),
                             })
                             .collect::<Result<Vec<Expr>>>()?
                     } else {
                         function
                             .args
                             .iter()
-                            .map(|a| self.sql_to_rex(a, schema))
+                            .map(|a| self.sql_to_rex(a, schema, aliased_schema))
                             .collect::<Result<Vec<Expr>>>()?
                     };
 
@@ -685,7 +723,7 @@ impl<'a, S: SchemaProvider> SqlToRel<'a, S> {
                         let args = function
                             .args
                             .iter()
-                            .map(|a| self.sql_to_rex(a, schema))
+                            .map(|a| self.sql_to_rex(a, schema, aliased_schema))
                             .collect::<Result<Vec<Expr>>>()?;
 
                         Ok(Expr::ScalarUDF { fun: fm, args })
@@ -700,7 +738,7 @@ impl<'a, S: SchemaProvider> SqlToRel<'a, S> {
                             let args = function
                                 .args
                                 .iter()
-                                .map(|a| self.sql_to_rex(a, schema))
+                                .map(|a| self.sql_to_rex(a, schema, aliased_schema))
                                 .collect::<Result<Vec<Expr>>>()?;
 
                             Ok(Expr::AggregateUDF { fun: fm, args })
@@ -713,7 +751,7 @@ impl<'a, S: SchemaProvider> SqlToRel<'a, S> {
                 }
             }
 
-            SQLExpr::Nested(e) => self.sql_to_rex(&e, &schema),
+            SQLExpr::Nested(e) => self.sql_to_rex(&e, &schema, aliased_schema),
 
             _ => Err(DataFusionError::NotImplemented(format!(
                 "Unsupported ast node {:?} in sqltorel",
