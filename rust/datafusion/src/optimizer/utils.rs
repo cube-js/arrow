@@ -129,6 +129,7 @@ pub fn expressions(plan: &LogicalPlan) -> Vec<Expr> {
         | LogicalPlan::Limit { .. }
         | LogicalPlan::CreateExternalTable { .. }
         | LogicalPlan::Explain { .. } => vec![],
+        LogicalPlan::Union { .. } => vec![],
     }
 }
 
@@ -149,6 +150,9 @@ pub fn inputs(plan: &LogicalPlan) -> Vec<&LogicalPlan> {
         | LogicalPlan::EmptyRelation { .. }
         | LogicalPlan::CreateExternalTable { .. }
         | LogicalPlan::Explain { .. } => vec![],
+        LogicalPlan::Union { inputs, .. } => {
+            inputs.iter().map(|p| p.as_ref()).collect::<Vec<_>>()
+        }
     }
 }
 
@@ -183,6 +187,14 @@ pub fn from_plan(
         LogicalPlan::Limit { n, .. } => Ok(LogicalPlan::Limit {
             n: *n,
             input: Arc::new(inputs[0].clone()),
+        }),
+        LogicalPlan::Union { alias, .. } => Ok(LogicalPlan::Union {
+            inputs: inputs
+                .iter()
+                .map(|p| Arc::new(p.clone()))
+                .collect::<Vec<_>>(),
+            schema: inputs[0].schema().clone(),
+            alias: alias.clone(),
         }),
         LogicalPlan::Extension { node } => Ok(LogicalPlan::Extension {
             node: node.from_template(expr, inputs),

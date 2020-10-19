@@ -825,6 +825,15 @@ pub enum LogicalPlan {
         /// The incoming logical plan
         input: Arc<LogicalPlan>,
     },
+    /// Union multiple inputs
+    Union {
+        /// Inputs to merge
+        inputs: Vec<Arc<LogicalPlan>>,
+        /// Union schema. Should be the same for all inputs.
+        schema: SchemaRef,
+        /// Union select alias
+        alias: Option<String>,
+    },
     /// Produces rows from a table provider by reference or from the context
     TableScan {
         /// The name of the schema
@@ -946,6 +955,7 @@ impl LogicalPlan {
             LogicalPlan::CreateExternalTable { schema, .. } => &schema,
             LogicalPlan::Explain { schema, .. } => &schema,
             LogicalPlan::Extension { node } => &node.schema(),
+            LogicalPlan::Union { schema, .. } => &schema,
         }
     }
 
@@ -972,6 +982,15 @@ impl LogicalPlan {
             LogicalPlan::CreateExternalTable { .. } => HashMap::new(),
             LogicalPlan::Explain { .. } => HashMap::new(),
             LogicalPlan::Extension { .. } => HashMap::new(), // TODO
+            LogicalPlan::Union {
+                inputs,
+                alias,
+                schema,
+            } => alias
+                .as_ref()
+                .iter()
+                .map(|a| (a.to_string(), schema.clone()))
+                .collect(),
         }
     }
 
@@ -1067,6 +1086,13 @@ impl LogicalPlan {
                     write!(f, "{:?}", expr[i])?;
                 }
                 input.fmt_with_indent(f, indent + 1)
+            }
+            LogicalPlan::Union { ref inputs, .. } => {
+                write!(f, "Union: ")?;
+                for input in inputs.iter() {
+                    input.fmt_with_indent(f, indent + 1)?
+                }
+                Ok(())
             }
             LogicalPlan::Limit {
                 ref input, ref n, ..
@@ -1390,6 +1416,7 @@ mod tests {
             "employee.csv",
             &employee_schema(),
             Some(vec![0, 3]),
+            None,
         )?
         .filter(col("state").eq(lit("CO")))?
         .project(vec![col("id")])?
@@ -1431,6 +1458,7 @@ mod tests {
             "employee.csv",
             &employee_schema(),
             Some(vec![3, 4]),
+            None,
         )?
         .aggregate(
             vec![col("state")],
@@ -1455,6 +1483,7 @@ mod tests {
             "employee.csv",
             &employee_schema(),
             Some(vec![3, 4]),
+            None,
         )?
         .sort(vec![
             Expr::Sort {
@@ -1485,6 +1514,7 @@ mod tests {
             "employee.csv",
             &employee_schema(),
             Some(vec![0, 3]),
+            None,
         )?
         // two columns with the same name => error
         .project(vec![col("id"), col("first_name").alias("id")]);
@@ -1509,6 +1539,7 @@ mod tests {
             "employee.csv",
             &employee_schema(),
             Some(vec![0, 3]),
+            None,
         )?
         // two columns with the same name => error
         .aggregate(vec![col("state")], vec![sum(col("salary")).alias("state")]);
