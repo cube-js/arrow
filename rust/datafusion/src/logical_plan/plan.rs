@@ -97,6 +97,15 @@ pub enum LogicalPlan {
         /// The incoming logical plan
         input: Arc<LogicalPlan>,
     },
+    /// Union multiple inputs
+    Union {
+        /// Inputs to merge
+        inputs: Vec<Arc<LogicalPlan>>,
+        /// Union schema. Should be the same for all inputs.
+        schema: DFSchemaRef,
+        /// Union select alias
+        alias: Option<String>,
+    },
     /// Join two logical plans on one or more join columns
     Join {
         /// Left input
@@ -194,6 +203,7 @@ impl LogicalPlan {
             LogicalPlan::CreateExternalTable { schema, .. } => &schema,
             LogicalPlan::Explain { schema, .. } => &schema,
             LogicalPlan::Extension { node } => &node.schema(),
+            LogicalPlan::Union { schema, .. } => &schema,
         }
     }
 
@@ -286,6 +296,12 @@ impl LogicalPlan {
             LogicalPlan::Join { left, right, .. } => {
                 left.accept(visitor)? && right.accept(visitor)?
             }
+            LogicalPlan::Union { inputs, .. } => inputs
+                .iter()
+                .map(|input| input.accept(visitor))
+                .collect::<Result<Vec<bool>, V::Error>>()?
+                .into_iter()
+                .all(|b| b),
             LogicalPlan::Limit { input, .. } => input.accept(visitor)?,
             LogicalPlan::Extension { node } => {
                 for input in node.inputs() {
@@ -571,6 +587,10 @@ impl LogicalPlan {
                     }
                     LogicalPlan::Explain { .. } => write!(f, "Explain"),
                     LogicalPlan::Extension { ref node } => node.fmt_for_explain(f),
+                    LogicalPlan::Union { .. } => {
+                        write!(f, "Union")?;
+                        Ok(())
+                    }
                 }
             }
         }

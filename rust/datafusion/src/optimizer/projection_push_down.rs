@@ -279,7 +279,8 @@ fn optimize_plan(
         | LogicalPlan::EmptyRelation { .. }
         | LogicalPlan::Sort { .. }
         | LogicalPlan::CreateExternalTable { .. }
-        | LogicalPlan::Extension { .. } => {
+        | LogicalPlan::Extension { .. }
+        | LogicalPlan::Union { .. } => {
             let expr = utils::expressions(plan);
             // collect all required columns by this plan
             utils::exprlist_to_column_names(&expr, &mut new_required_columns)?;

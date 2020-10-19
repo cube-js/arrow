@@ -79,6 +79,17 @@ fn get_num_rows(logical_plan: &LogicalPlan) -> Option<usize> {
         // the following operators do not modify row count in any way
         LogicalPlan::Projection { input, .. } => get_num_rows(input),
         LogicalPlan::Sort { input, .. } => get_num_rows(input),
+        LogicalPlan::Union { inputs, .. } => {
+            let options = inputs
+                .iter()
+                .map(|i| get_num_rows(i.as_ref()))
+                .collect::<Vec<_>>();
+            if options.iter().all(|o| o.is_some()) {
+                Some(options.iter().map(|o| o.unwrap()).sum())
+            } else {
+                None
+            }
+        }
     }
 }
 
@@ -145,6 +156,7 @@ impl OptimizerRule for HashBuildProbeOrder {
             | LogicalPlan::Sort { .. }
             | LogicalPlan::CreateExternalTable { .. }
             | LogicalPlan::Explain { .. }
+            | LogicalPlan::Union { .. }
             | LogicalPlan::Extension { .. } => {
                 let expr = utils::expressions(plan);
 
