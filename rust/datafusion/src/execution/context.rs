@@ -676,9 +676,10 @@ mod tests {
         let schema = ctx.state.datasources.get("test").unwrap().schema();
         assert_eq!(schema.field_with_name("c1")?.is_nullable(), false);
 
-        let plan = LogicalPlanBuilder::scan("default", "test", schema.as_ref(), None)?
-            .project(vec![col("c1")])?
-            .build()?;
+        let plan =
+            LogicalPlanBuilder::scan("default", "test", schema.as_ref(), None, None)?
+                .project(vec![col("c1")])?
+                .build()?;
 
         let plan = ctx.optimize(&plan)?;
         let physical_plan = ctx.create_physical_plan(&Arc::new(plan))?;
@@ -1105,10 +1106,11 @@ mod tests {
             Field::new("c2", DataType::UInt32, false),
         ]));
 
-        let plan = LogicalPlanBuilder::scan("default", "test", schema.as_ref(), None)?
-            .aggregate(vec![col("c1")], vec![sum(col("c2"))])?
-            .project(vec![col("c1"), col("SUM(c2)").alias("total_salary")])?
-            .build()?;
+        let plan =
+            LogicalPlanBuilder::scan("default", "test", schema.as_ref(), None, None)?
+                .aggregate(vec![col("c1")], vec![sum(col("c2"))])?
+                .project(vec![col("c1"), col("SUM(c2)").alias("total_salary")])?
+                .build()?;
 
         let plan = ctx.optimize(&plan)?;
 

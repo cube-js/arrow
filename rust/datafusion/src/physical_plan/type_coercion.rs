@@ -95,6 +95,28 @@ pub fn data_types(
             }
             vec![(0..*number).map(|i| current_types[i].clone()).collect()]
         }
+        Signature::IfFn => {
+            let mut input_return_types = Vec::new();
+            if current_types.len() < 2 {
+                return Err(ExecutionError::General(format!(
+                    "If requires at least 2 arguments but found {:?}",
+                    current_types
+                )));
+            }
+            for c in current_types.chunks(2) {
+                input_return_types.push(c[c.len() - 1].clone())
+            }
+            let common = common_type(&input_return_types)?;
+            vec![(0..current_types.len())
+                .map(|i| {
+                    if i % 2 == 1 || i == current_types.len() - 1 {
+                        common.clone()
+                    } else {
+                        DataType::Boolean
+                    }
+                })
+                .collect::<Vec<_>>()]
+        }
     };
 
     if valid_types.contains(current_types) {
@@ -200,6 +222,23 @@ pub fn can_coerce_from(type_into: &DataType, type_from: &DataType) -> bool {
         Utf8 => true,
         _ => false,
     }
+}
+
+/// Find common type to coerce to
+pub fn common_type(data_types: &Vec<DataType>) -> Result<DataType> {
+    data_types.iter().fold(Ok(data_types[0].clone()), |a, b| {
+        let resolved = a?;
+        if can_coerce_from(&resolved, b) {
+            Ok(resolved)
+        } else if can_coerce_from(b, &resolved) {
+            Ok(b.clone())
+        } else {
+            Err(ExecutionError::ExecutionError(format!(
+                "Can't find common type between {:?} and {:?}",
+                resolved, b
+            )))
+        }
+    })
 }
 
 #[cfg(test)]

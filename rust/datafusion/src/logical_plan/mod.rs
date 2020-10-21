@@ -948,6 +948,7 @@ impl LogicalPlan {
         }
     }
 
+    /// Table alias name to schema
     pub fn aliased_schema(&self) -> HashMap<String, SchemaRef> {
         match self {
             LogicalPlan::EmptyRelation { .. } => HashMap::new(),
@@ -971,11 +972,7 @@ impl LogicalPlan {
             LogicalPlan::CreateExternalTable { .. } => HashMap::new(),
             LogicalPlan::Explain { .. } => HashMap::new(),
             LogicalPlan::Extension { .. } => HashMap::new(), // TODO
-            LogicalPlan::Union {
-                inputs,
-                alias,
-                schema,
-            } => alias
+            LogicalPlan::Union { alias, schema, .. } => alias
                 .as_ref()
                 .iter()
                 .map(|a| (a.to_string(), schema.clone()))
