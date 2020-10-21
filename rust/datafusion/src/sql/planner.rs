@@ -1754,6 +1754,17 @@ mod tests {
     }
 
     #[test]
+    fn select_group_by_needs_projection_with_replace() {
+        let sql = "SELECT SUM(salary) / NULLIF(COUNT(state), 0), state FROM person GROUP BY state";
+        let expected = "\
+        Projection: #SUM(salary) Divide nullif(#COUNT(state), Int64(0)), #state\
+        \n  Aggregate: groupBy=[[#state]], aggr=[[SUM(#salary), COUNT(#state)]]\
+        \n    TableScan: person projection=None";
+
+        quick_test(sql, expected);
+    }
+
+    #[test]
     fn select_7480_1() {
         let sql = "SELECT c1, MIN(c12) FROM aggregate_test_100 GROUP BY c1, c13";
         let expected = "Projection: #c1, #MIN(c12)\
