@@ -1134,6 +1134,72 @@ macro_rules! binary_array_op {
     }};
 }
 
+macro_rules! build_null_array {
+    ($LEFT:expr, $DT:ident) => {{
+        let mut builder = $DT::builder($LEFT.data_ref().len());
+        for _ in 0..$LEFT.data_ref().len() {
+            builder.append_null()?;
+        }
+        Arc::new(builder.finish())
+    }};
+}
+
+macro_rules! condition_op {
+    ($CONDITION:expr, $LEFT:expr, $RIGHT:expr, $DT:ident) => {{
+        let cc = $CONDITION
+            .as_any()
+            .downcast_ref::<BooleanArray>()
+            .expect("condition_op failed to downcast array");
+        let ll = $LEFT
+            .as_any()
+            .downcast_ref::<$DT>()
+            .expect("condition_op failed to downcast array");
+        let else_values = if let Some(e) = $RIGHT {
+            e
+        } else {
+            build_null_array!($LEFT, $DT)
+        };
+        let rr = else_values
+            .as_any()
+            .downcast_ref::<$DT>()
+            .expect("condition_op failed to downcast array");
+
+        Ok(Arc::new(arrow::compute::kernels::if_op::if_primitive(
+            &cc, &ll, &rr,
+        )?))
+    }};
+}
+
+macro_rules! condition_primitive_array_op {
+    ($CONDITION:expr, $LEFT:expr, $RIGHT:expr) => {{
+        match $LEFT.data_type() {
+            DataType::Int8 => condition_op!($CONDITION, $LEFT, $RIGHT, Int8Array),
+            DataType::Int16 => condition_op!($CONDITION, $LEFT, $RIGHT, Int16Array),
+            DataType::Int32 => condition_op!($CONDITION, $LEFT, $RIGHT, Int32Array),
+            DataType::Int64 => condition_op!($CONDITION, $LEFT, $RIGHT, Int64Array),
+            DataType::UInt8 => condition_op!($CONDITION, $LEFT, $RIGHT, UInt8Array),
+            DataType::UInt16 => condition_op!($CONDITION, $LEFT, $RIGHT, UInt16Array),
+            DataType::UInt32 => condition_op!($CONDITION, $LEFT, $RIGHT, UInt32Array),
+            DataType::UInt64 => condition_op!($CONDITION, $LEFT, $RIGHT, UInt64Array),
+            DataType::Float32 => condition_op!($CONDITION, $LEFT, $RIGHT, Float32Array),
+            DataType::Float64 => condition_op!($CONDITION, $LEFT, $RIGHT, Float64Array),
+            other => Err(ExecutionError::General(format!(
+                "Unsupported data type {:?}",
+                other
+            ))),
+        }
+    }};
+}
+
+/// If kernel for arbitrary array
+pub fn if_array(
+    condition: ArrayRef,
+    then_values: ArrayRef,
+    else_values: Option<ArrayRef>,
+) -> Result<ArrayRef> {
+    condition_primitive_array_op!(condition, then_values, else_values)
+}
+
 /// Invoke a boolean kernel on a pair of arrays
 macro_rules! boolean_op {
     ($LEFT:expr, $RIGHT:expr, $OP:ident) => {{
