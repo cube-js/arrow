@@ -17,7 +17,7 @@
 
 //! If flow control kernel
 
-use crate::array::{Array, ArrayData, BooleanArray, PrimitiveArray, PrimitiveArrayOps};
+use crate::array::{Array, ArrayData, BooleanArray, PrimitiveArray};
 use crate::buffer::Buffer;
 use crate::datatypes;
 use crate::datatypes::ToByteSlice;
@@ -69,7 +69,7 @@ where
         .collect::<Vec<T::Native>>();
 
     let data = ArrayData::new(
-        T::get_data_type(),
+        T::DATA_TYPE,
         condition.len(),
         None,
         null_bit_array.data_ref().null_buffer().map(|b| b.clone()),

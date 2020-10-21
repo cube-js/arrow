@@ -38,6 +38,7 @@ use crate::{
 use arrow::datatypes::*;
 
 use super::parser::ExplainPlan;
+use itertools::Itertools;
 use crate::prelude::JoinType;
 use sqlparser::ast::{
     BinaryOperator, DataType as SQLDataType, Expr as SQLExpr, Join, JoinConstraint,
@@ -477,7 +478,12 @@ impl<'a, S: SchemaProvider> SqlToRel<'a, S> {
         let aggr_expr: Vec<Expr> = projection_expr
             .iter()
             .filter(|e| is_aggregate_expr(e))
-            .map(|e| e.clone())
+            .flat_map(|e| collect_aggregate_expr(e, vec![]))
+            .map(|e| -> Result<(String, Expr)> { Ok((e.name(plan.schema())?, e)) })
+            .collect::<Result<Vec<_>>>()?
+            .into_iter()
+            .unique_by(|(name, _)| name.to_string())
+            .map(|(_, e)| e)
             .collect();
 
         // apply projection or aggregate
@@ -525,10 +531,22 @@ impl<'a, S: SchemaProvider> SqlToRel<'a, S> {
             })
             .collect::<Result<Vec<Expr>>>()?;
 
-        let group_by_count = group_expr.len();
-        let aggr_count = aggr_expr.len();
+        let non_aggr_projection = projection_expr
+            .iter()
+            .filter(|e| !is_aggregate_expr(e))
+            .collect::<Vec<_>>();
+        let mut group_expr_names = group_expr
+            .iter()
+            .map(|e| e.name(input.schema()))
+            .collect::<Result<Vec<_>>>()?;
+        group_expr_names.sort();
+        let mut non_aggr_projection_names = non_aggr_projection
+            .iter()
+            .map(|e| e.name(input.schema()))
+            .collect::<Result<Vec<_>>>()?;
+        non_aggr_projection_names.sort();
 
-        if group_by_count + aggr_count != projection_expr.len() {
+        if group_expr_names != non_aggr_projection_names {
             return Err(DataFusionError::Plan(
                 "Projection references non-aggregate values".to_owned(),
             ));
@@ -539,24 +557,37 @@ impl<'a, S: SchemaProvider> SqlToRel<'a, S> {
             .build()?;
 
         // optionally wrap in projection to preserve final order of fields
-        let expected_columns: Vec<String> = projection_expr
-            .iter()
-            .map(|e| e.name(input.schema()))
-            .collect::<Result<Vec<_>>>()?;
-        let columns: Vec<String> = plan
+        let columns = plan
             .schema()
             .fields()
             .iter()
-            .map(|f| f.name().clone())
+            .map(|f| Expr::Column(f.name().clone()))
             .collect::<Vec<_>>();
-        if expected_columns != columns {
-            self.project(
-                &plan,
-                expected_columns
-                    .iter()
-                    .map(|c| Expr::Column(c.clone()))
-                    .collect(),
-            )
+        let expected_columns = projection_expr
+            .iter()
+            .map(|e| {
+                replace_aggregate_expr_in_projection(
+                    e,
+                    input.schema(),
+                    &plan
+                        .schema()
+                        .fields()
+                        .iter()
+                        .map(|f| f.name().clone())
+                        .collect::<HashSet<_>>(),
+                )
+            })
+            .collect::<Result<Vec<_>>>()?;
+        if expected_columns
+            .iter()
+            .map(|c| c.name(input.schema()))
+            .collect::<Result<Vec<_>>>()?
+            != columns
+                .iter()
+                .map(|c| c.name(input.schema()))
+                .collect::<Result<Vec<_>>>()?
+        {
+            self.project(&plan, expected_columns)
         } else {
             Ok(plan)
         }
@@ -807,6 +838,40 @@ impl<'a, S: SchemaProvider> SqlToRel<'a, S> {
                     return Ok(Expr::ScalarFunction { fun, args });
                 };
 
+                if name.to_lowercase() == "nullif" {
+                    if let Ok(if_fn) = functions::BuiltinScalarFunction::from_str("if") {
+                        if function.args.len() != 2 {
+                            return Err(DataFusionError::Execution(format!(
+                                "nullif expects 2 arguments but found: {:?}",
+                                function.args
+                            )));
+                        }
+                        return Ok(Expr::ScalarFunction {
+                            fun: if_fn,
+                            args: vec![
+                                Expr::BinaryExpr {
+                                    left: Box::new(self.sql_to_rex(
+                                        &function.args[0],
+                                        &schema,
+                                        aliased_schema,
+                                    )?),
+                                    op: Operator::NotEq,
+                                    right: Box::new(self.sql_to_rex(
+                                        &function.args[1],
+                                        &schema,
+                                        aliased_schema,
+                                    )?),
+                                },
+                                self.sql_to_rex(
+                                    &function.args[0],
+                                    &schema,
+                                    aliased_schema,
+                                )?,
+                            ],
+                        });
+                    }
+                }
+
                 // next, aggregate built-ins
                 if let Ok(fun) = aggregates::AggregateFunction::from_str(&name) {
                     let args = if fun == aggregates::AggregateFunction::Count {
@@ -999,7 +1064,77 @@ fn is_aggregate_expr(e: &Expr) -> bool {
     match e {
         Expr::AggregateFunction { .. } | Expr::AggregateUDF { .. } => true,
         Expr::Alias(expr, _) => is_aggregate_expr(expr),
+        Expr::BinaryExpr { left, right, .. } => {
+            is_aggregate_expr(left) || is_aggregate_expr(right)
+        }
+        Expr::ScalarFunction { args, .. } => args.iter().any(|e| is_aggregate_expr(e)),
         _ => false,
+    }
+}
+
+/// Collect Aggregate expressions hierarchically
+fn collect_aggregate_expr(e: &Expr, result: Vec<Expr>) -> Vec<Expr> {
+    let mut next_result = result;
+    match e {
+        Expr::AggregateFunction { .. } | Expr::AggregateUDF { .. } => {
+            next_result.push(e.clone());
+        }
+        Expr::Alias(expr, _) => next_result = collect_aggregate_expr(expr, next_result),
+        Expr::BinaryExpr { left, right, .. } => {
+            next_result = collect_aggregate_expr(left, next_result);
+            next_result = collect_aggregate_expr(right, next_result);
+        }
+        Expr::ScalarFunction { args, .. } => {
+            for arg in args.iter() {
+                next_result = collect_aggregate_expr(arg, next_result);
+            }
+        }
+        _ => (),
+    };
+    next_result
+}
+
+fn replace_aggregate_expr_in_projection(
+    expr: &Expr,
+    input_schema: &Schema,
+    aggregate_expr: &HashSet<String>,
+) -> Result<Expr> {
+    let name = expr.name(input_schema)?;
+    if aggregate_expr.contains(&name) {
+        return Ok(Expr::Column(name));
+    }
+    match expr {
+        Expr::Alias(expr, alias) => Ok(Expr::Alias(
+            Box::new(replace_aggregate_expr_in_projection(
+                expr,
+                input_schema,
+                aggregate_expr,
+            )?),
+            alias.to_string(),
+        )),
+        Expr::BinaryExpr { left, right, op } => Ok(Expr::BinaryExpr {
+            left: Box::new(replace_aggregate_expr_in_projection(
+                left,
+                input_schema,
+                aggregate_expr,
+            )?),
+            right: Box::new(replace_aggregate_expr_in_projection(
+                right,
+                input_schema,
+                aggregate_expr,
+            )?),
+            op: op.clone(),
+        }),
+        Expr::ScalarFunction { args, fun } => Ok(Expr::ScalarFunction {
+            fun: fun.clone(),
+            args: args
+                .iter()
+                .map(|e| {
+                    replace_aggregate_expr_in_projection(e, input_schema, aggregate_expr)
+                })
+                .collect::<Result<Vec<_>>>()?,
+        }),
+        x => Ok(x.clone()),
     }
 }
 
@@ -1285,6 +1420,17 @@ mod tests {
         let expected = "\
         Projection: #COUNT(state), #state\
         \n  Aggregate: groupBy=[[#state]], aggr=[[COUNT(#state)]]\
+        \n    TableScan: person projection=None";
+
+        quick_test(sql, expected);
+    }
+
+    #[test]
+    fn select_group_by_needs_projection_with_replace() {
+        let sql = "SELECT SUM(salary) / NULLIF(COUNT(state), 0), state FROM person GROUP BY state";
+        let expected = "\
+        Projection: #SUM(salary) Divide nullif(#COUNT(state), Int64(0)), #state\
+        \n  Aggregate: groupBy=[[#state]], aggr=[[SUM(#salary), COUNT(#state)]]\
         \n    TableScan: person projection=None";
 
         quick_test(sql, expected);

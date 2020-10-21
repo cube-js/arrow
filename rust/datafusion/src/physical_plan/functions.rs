@@ -37,8 +37,10 @@ use crate::error::{DataFusionError, Result};
 use crate::physical_plan::array_expressions;
 use crate::physical_plan::datetime_expressions;
 use crate::physical_plan::expressions::{nullif_func, SUPPORTED_NULLIF_TYPES};
+use crate::physical_plan::expressions::if_array;
 use crate::physical_plan::math_expressions;
 use crate::physical_plan::string_expressions;
+use crate::physical_plan::type_coercion::common_type;
 use arrow::{
     array::ArrayRef,
     compute::kernels::length::length,
@@ -67,6 +69,8 @@ pub enum Signature {
     Exact(Vec<DataType>),
     /// fixed number of arguments of arbitrary types
     Any(usize),
+    /// Custom signature support
+    IfFn,
 }
 
 /// Scalar function
@@ -128,6 +132,8 @@ pub enum BuiltinScalarFunction {
     ConvertTz,
     /// Date truncate
     DateTrunc,
+    /// Case function
+    If,
 }
 
 impl fmt::Display for BuiltinScalarFunction {
@@ -163,6 +169,7 @@ impl FromStr for BuiltinScalarFunction {
             "to_timestamp" => BuiltinScalarFunction::ToTimestamp,
             "convert_tz" => BuiltinScalarFunction::ConvertTz,
             "date_trunc" => BuiltinScalarFunction::DateTrunc,
+            "if" => BuiltinScalarFunction::If,
             "array" => BuiltinScalarFunction::Array,
             "nullif" => BuiltinScalarFunction::NullIf,
             _ => {
@@ -218,6 +225,13 @@ pub fn return_type(
         BuiltinScalarFunction::DateTrunc => {
             Ok(DataType::Timestamp(TimeUnit::Nanosecond, None))
         }
+        BuiltinScalarFunction::If => {
+            let mut return_types = Vec::new();
+            for c in arg_types.chunks(2) {
+                return_types.push(c[c.len() - 1].clone())
+            }
+            common_type(&return_types)
+        }
         BuiltinScalarFunction::Array => Ok(DataType::FixedSizeList(
             Box::new(Field::new("item", arg_types[0].clone(), true)),
             arg_types.len() as i32,
@@ -270,6 +284,20 @@ pub fn create_physical_expr(
         BuiltinScalarFunction::DateTrunc => {
             |args| Ok(Arc::new(datetime_expressions::date_trunc(args)?))
         }
+        BuiltinScalarFunction::If => |args| {
+            let res = args.chunks(2).rfold(
+                Ok(None),
+                |last_value: Result<Option<ArrayRef>>, chunk| {
+                    let value = last_value?;
+                    if chunk.len() == 2 {
+                        Ok(Some(if_array(chunk[0].clone(), chunk[1].clone(), value)?))
+                    } else {
+                        Ok(Some(chunk[0].clone()))
+                    }
+                },
+            )?;
+            res.ok_or(DataFusionError::Internal("Empty if".to_string()))
+        },
         BuiltinScalarFunction::Array => |args| Ok(array_expressions::array(args)?),
     });
     // coerce
@@ -307,6 +335,7 @@ fn signature(fun: &BuiltinScalarFunction) -> Signature {
             DataType::Timestamp(TimeUnit::Nanosecond, None),
             DataType::Utf8,
         ]),
+        BuiltinScalarFunction::If => Signature::IfFn,
         BuiltinScalarFunction::Array => {
             Signature::Variadic(array_expressions::SUPPORTED_ARRAY_TYPES.to_vec())
         }
