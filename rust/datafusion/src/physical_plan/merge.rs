@@ -134,6 +134,7 @@ impl ExecutionPlan for MergeExec {
     }
 }
 
+/// Union all execution
 #[derive(Debug)]
 pub struct UnionExec {
     /// Input execution plan
