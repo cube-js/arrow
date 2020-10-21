@@ -1183,7 +1183,7 @@ macro_rules! condition_primitive_array_op {
             DataType::UInt64 => condition_op!($CONDITION, $LEFT, $RIGHT, UInt64Array),
             DataType::Float32 => condition_op!($CONDITION, $LEFT, $RIGHT, Float32Array),
             DataType::Float64 => condition_op!($CONDITION, $LEFT, $RIGHT, Float64Array),
-            other => Err(ExecutionError::General(format!(
+            other => Err(DataFusionError::NotImplemented(format!(
                 "Unsupported data type {:?}",
                 other
             ))),
