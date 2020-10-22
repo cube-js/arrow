@@ -26,7 +26,7 @@ use crate::error::{DataFusionError, Result};
 use crate::logical_plan::Operator;
 use crate::physical_plan::{Accumulator, AggregateExpr, PhysicalExpr};
 use crate::scalar::ScalarValue;
-use arrow::array::{self, Array, BooleanBuilder, LargeStringArray};
+use arrow::array::{self, Array, BooleanBuilder, LargeStringArray, StringBuilder};
 use arrow::compute;
 use arrow::compute::kernels;
 use arrow::compute::kernels::arithmetic::{add, divide, multiply, subtract};
@@ -1135,8 +1135,8 @@ macro_rules! binary_array_op {
 }
 
 macro_rules! build_null_array {
-    ($LEFT:expr, $DT:ident) => {{
-        let mut builder = $DT::builder($LEFT.data_ref().len());
+    ($LEFT:expr, $BUILDER:path) => {{
+        let mut builder = $BUILDER($LEFT.data_ref().len());
         for _ in 0..$LEFT.data_ref().len() {
             builder.append_null()?;
         }
@@ -1157,7 +1157,7 @@ macro_rules! condition_op {
         let else_values = if let Some(e) = $RIGHT {
             e
         } else {
-            build_null_array!($LEFT, $DT)
+            build_null_array!($LEFT, $DT::builder)
         };
         let rr = else_values
             .as_any()
@@ -1165,6 +1165,32 @@ macro_rules! condition_op {
             .expect("condition_op failed to downcast array");
 
         Ok(Arc::new(arrow::compute::kernels::if_op::if_primitive(
+            &cc, &ll, &rr,
+        )?))
+    }};
+}
+
+macro_rules! string_condition_op {
+    ($CONDITION:expr, $LEFT:expr, $RIGHT:expr, $DT:ident) => {{
+        let cc = $CONDITION
+            .as_any()
+            .downcast_ref::<BooleanArray>()
+            .expect("condition_op failed to downcast array");
+        let ll = $LEFT
+            .as_any()
+            .downcast_ref::<$DT>()
+            .expect("condition_op failed to downcast array");
+        let else_values = if let Some(e) = $RIGHT {
+            e
+        } else {
+            build_null_array!($LEFT, StringBuilder::new)
+        };
+        let rr = else_values
+            .as_any()
+            .downcast_ref::<$DT>()
+            .expect("condition_op failed to downcast array");
+
+        Ok(Arc::new(arrow::compute::kernels::if_op::if_string(
             &cc, &ll, &rr,
         )?))
     }};
@@ -1183,6 +1209,9 @@ macro_rules! condition_primitive_array_op {
             DataType::UInt64 => condition_op!($CONDITION, $LEFT, $RIGHT, UInt64Array),
             DataType::Float32 => condition_op!($CONDITION, $LEFT, $RIGHT, Float32Array),
             DataType::Float64 => condition_op!($CONDITION, $LEFT, $RIGHT, Float64Array),
+            DataType::Utf8 => {
+                string_condition_op!($CONDITION, $LEFT, $RIGHT, StringArray)
+            }
             other => Err(DataFusionError::NotImplemented(format!(
                 "Unsupported data type {:?}",
                 other
