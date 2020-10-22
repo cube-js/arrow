@@ -17,7 +17,10 @@
 
 //! If flow control kernel
 
-use crate::array::{Array, ArrayData, BooleanArray, PrimitiveArray};
+use crate::array::{
+    Array, ArrayData, BooleanArray, PrimitiveArray, StringArray,
+    StringBuilder,
+};
 use crate::buffer::Buffer;
 use crate::datatypes;
 use crate::datatypes::ToByteSlice;
@@ -78,4 +81,36 @@ where
         vec![],
     );
     Ok(PrimitiveArray::<T>::from(Arc::new(data)))
+}
+
+pub fn if_string(
+    condition: &BooleanArray,
+    then_values: &StringArray,
+    else_values: &StringArray,
+) -> Result<StringArray> {
+    if condition.len() != then_values.len() || condition.len() != else_values.len() {
+        return Err(ArrowError::ComputeError(
+            "Cannot perform if operation on arrays of different length".to_string(),
+        ));
+    }
+
+    let mut builder = StringBuilder::new(condition.len());
+
+    for i in 0..condition.len() {
+        if condition.is_valid(i) && condition.value(i) {
+            if then_values.is_valid(i) {
+                builder.append_value(then_values.value(i))?;
+            } else {
+                builder.append_null()?;
+            }
+        } else {
+            if else_values.is_valid(i) {
+                builder.append_value(else_values.value(i))?;
+            } else {
+                builder.append_null()?;
+            }
+        }
+    }
+
+    Ok(builder.finish())
 }
