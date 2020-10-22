@@ -496,8 +496,20 @@ impl<'a, S: SchemaProvider> SqlToRel<'a, S> {
             .map(|e| {
                 Ok(Expr::Sort {
                     expr: Box::new(
-                        self.sql_to_rex(&e.expr, &input_schema, &plan.aliased_schema())
-                            .unwrap(),
+                        match &e.expr {
+                            SQLExpr::Value(Value::Number(n)) => match n.parse::<usize>() {
+                                Ok(n) => {
+                                    let schema = plan.schema();
+                                    if n >= 1 && n - 1 < schema.fields().len() {
+                                        Ok(Expr::Column(schema.field(n - 1).name().to_string()))
+                                    } else {
+                                        Err(ExecutionError::General(format!("Select column reference should be within 1..{} but found {}", schema.fields().len(), n)))
+                                    }
+                                },
+                                Err(_) => Err(ExecutionError::General(format!("Can't parse {} as number", n))),
+                            }
+                            _ => self.sql_to_rex(&e.expr, &input_schema, &plan.aliased_schema())
+                        }?
                     ),
                     // by default asc
                     asc: e.asc.unwrap_or(true),
@@ -1095,6 +1107,15 @@ mod tests {
     #[test]
     fn select_order_by_desc() {
         let sql = "SELECT id FROM person ORDER BY id DESC";
+        let expected = "Sort: #id DESC NULLS FIRST\
+                        \n  Projection: #id\
+                        \n    TableScan: person projection=None";
+        quick_test(sql, expected);
+    }
+
+    #[test]
+    fn select_order_by_num_reference_desc() {
+        let sql = "SELECT id FROM person ORDER BY 1 DESC";
         let expected = "Sort: #id DESC NULLS FIRST\
                         \n  Projection: #id\
                         \n    TableScan: person projection=None";
