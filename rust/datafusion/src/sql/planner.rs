@@ -653,6 +653,40 @@ impl<'a, S: SchemaProvider> SqlToRel<'a, S> {
                 })
             }
 
+            SQLExpr::Case {
+                operand,
+                conditions,
+                results,
+                else_result,
+            } => {
+                if operand.is_some() {
+                    return Err(ExecutionError::ExecutionError(format!(
+                        "Operand in CASE is not supported: {:?}",
+                        operand
+                    )));
+                }
+
+                let mut if_args = Vec::new();
+
+                let condition_with_results = conditions.iter().zip(results.iter());
+
+                for (condition, res) in condition_with_results {
+                    if_args.push(self.sql_to_rex(condition, schema, aliased_schema)?);
+                    if_args.push(self.sql_to_rex(res, schema, aliased_schema)?);
+                }
+
+                if let Some(res) = else_result {
+                    if_args.push(self.sql_to_rex(res, schema, aliased_schema)?)
+                }
+
+                let if_fn = functions::BuiltinScalarFunction::from_str("if")?;
+
+                Ok(Expr::ScalarFunction {
+                    fun: if_fn,
+                    args: if_args,
+                })
+            }
+
             SQLExpr::Function(function) => {
                 // TODO parser should do lowercase?
                 let name: String = function.name.to_string().to_lowercase();
@@ -1109,6 +1143,17 @@ mod tests {
         let expected = "\
         Projection: #SUM(salary) Divide if(#COUNT(state) NotEq Int64(0), #COUNT(state)), #state\
         \n  Aggregate: groupBy=[[#state]], aggr=[[SUM(#salary), COUNT(#state)]]\
+        \n    TableScan: person projection=None";
+
+        quick_test(sql, expected);
+    }
+
+    #[test]
+    fn select_group_by_needs_projection_with_case() {
+        let sql = "SELECT SUM(CASE WHEN state = 'CA' THEN 1 ELSE 0 END) / NULLIF(COUNT(state), 0), state FROM person GROUP BY state";
+        let expected = "\
+        Projection: #SUM(if(state Eq Utf8(\"CA\"),Int64(1),Int64(0))) Divide if(#COUNT(state) NotEq Int64(0), #COUNT(state)), #state\
+        \n  Aggregate: groupBy=[[#state]], aggr=[[SUM(if(#state Eq Utf8(\"CA\"), Int64(1), Int64(0))), COUNT(#state)]]\
         \n    TableScan: person projection=None";
 
         quick_test(sql, expected);
