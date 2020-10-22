@@ -26,15 +26,18 @@ use crate::logical_plan::Operator;
 use crate::physical_plan::{Accumulator, AggregateExpr, PhysicalExpr};
 use crate::scalar::ScalarValue;
 use arrow::array::{
-    Float32Builder, Float64Builder, Int16Builder, Int32Builder, Int64Builder,
-    Int8Builder, LargeStringArray, StringBuilder, UInt16Builder, UInt32Builder,
-    UInt64Builder, UInt8Builder,
+    BooleanBuilder, Float32Builder, Float64Builder, Int16Builder, Int32Builder,
+    Int64Builder, Int8Builder, LargeStringArray, StringBuilder, UInt16Builder,
+    UInt32Builder, UInt64Builder, UInt8Builder,
 };
 use arrow::compute;
 use arrow::compute::kernels;
 use arrow::compute::kernels::arithmetic::{add, divide, multiply, subtract};
 use arrow::compute::kernels::boolean::{and, or};
 use arrow::compute::kernels::comparison::{eq, gt, gt_eq, lt, lt_eq, neq};
+use arrow::compute::kernels::comparison::{
+    eq_bool, gt_bool, gt_eq_bool, lt_bool, lt_eq_bool, neq_bool,
+};
 use arrow::compute::kernels::comparison::{
     eq_utf8, gt_eq_utf8, gt_utf8, like_utf8, lt_eq_utf8, lt_utf8, neq_utf8, nlike_utf8,
 };
@@ -964,6 +967,21 @@ macro_rules! compute_utf8_op {
     }};
 }
 
+/// Invoke a compute kernel on a pair of binary data arrays for boolean
+macro_rules! compute_bool_op {
+    ($LEFT:expr, $RIGHT:expr, $OP:ident, $DT:ident) => {{
+        let ll = $LEFT
+            .as_any()
+            .downcast_ref::<$DT>()
+            .expect("compute_op failed to downcast array");
+        let rr = $RIGHT
+            .as_any()
+            .downcast_ref::<$DT>()
+            .expect("compute_op failed to downcast array");
+        Ok(Arc::new(paste::expr! {[<$OP _bool>]}(&ll, &rr)?))
+    }};
+}
+
 /// Invoke a compute kernel on a pair of arrays
 macro_rules! compute_op {
     ($LEFT:expr, $RIGHT:expr, $OP:ident, $DT:ident) => {{
@@ -1030,6 +1048,7 @@ macro_rules! binary_array_op {
             DataType::UInt64 => compute_op!($LEFT, $RIGHT, $OP, UInt64Array),
             DataType::Float32 => compute_op!($LEFT, $RIGHT, $OP, Float32Array),
             DataType::Float64 => compute_op!($LEFT, $RIGHT, $OP, Float64Array),
+            DataType::Boolean => compute_bool_op!($LEFT, $RIGHT, $OP, BooleanArray),
             DataType::Utf8 => compute_utf8_op!($LEFT, $RIGHT, $OP, StringArray),
             DataType::Timestamp(TimeUnit::Nanosecond, None) => {
                 compute_op!($LEFT, $RIGHT, $OP, TimestampNanosecondArray)
@@ -1761,6 +1780,9 @@ impl PhysicalExpr for Literal {
             }
             ScalarValue::Float64(value) => {
                 build_literal_array!(batch, Float64Builder, *value)
+            }
+            ScalarValue::Boolean(value) => {
+                build_literal_array!(batch, BooleanBuilder, *value)
             }
             ScalarValue::Utf8(value) => build_literal_array!(
                 batch,
