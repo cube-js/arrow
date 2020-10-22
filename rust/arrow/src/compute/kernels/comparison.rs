@@ -320,6 +320,30 @@ pub fn nlike_utf8_scalar(left: &StringArray, right: &str) -> Result<BooleanArray
     Ok(BooleanArray::from(Arc::new(data)))
 }
 
+pub fn eq_bool(left: &BooleanArray, right: &BooleanArray) -> Result<BooleanArray> {
+    compare_op!(left, right, |a, b| a == b)
+}
+
+pub fn neq_bool(left: &BooleanArray, right: &BooleanArray) -> Result<BooleanArray> {
+    compare_op!(left, right, |a, b| a != b)
+}
+
+pub fn lt_bool(left: &BooleanArray, right: &BooleanArray) -> Result<BooleanArray> {
+    compare_op!(left, right, |a: bool, b: bool| !a & b)
+}
+
+pub fn lt_eq_bool(left: &BooleanArray, right: &BooleanArray) -> Result<BooleanArray> {
+    compare_op!(left, right, |a, b| a <= b)
+}
+
+pub fn gt_bool(left: &BooleanArray, right: &BooleanArray) -> Result<BooleanArray> {
+    compare_op!(left, right, |a: bool, b: bool| a & !b)
+}
+
+pub fn gt_eq_bool(left: &BooleanArray, right: &BooleanArray) -> Result<BooleanArray> {
+    compare_op!(left, right, |a, b| a >= b)
+}
+
 pub fn eq_utf8(left: &StringArray, right: &StringArray) -> Result<BooleanArray> {
     compare_op!(left, right, |a, b| a == b)
 }

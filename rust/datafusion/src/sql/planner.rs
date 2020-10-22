@@ -709,6 +709,7 @@ impl<'a, S: ContextProvider> SqlToRel<'a, S> {
                 Ok(n) => Ok(lit(n)),
                 Err(_) => Ok(lit(n.parse::<f64>().unwrap())),
             },
+            SQLExpr::Value(Value::Boolean(b)) => Ok(lit(*b)),
             SQLExpr::Value(Value::SingleQuotedString(ref s)) => Ok(lit(s.clone())),
 
             SQLExpr::Value(Value::Null) => Ok(Expr::Literal(ScalarValue::Utf8(None))),
@@ -1768,8 +1769,8 @@ mod tests {
     fn select_group_by_needs_projection_with_case() {
         let sql = "SELECT SUM(CASE WHEN state = 'CA' THEN 1 ELSE 0 END) / NULLIF(COUNT(state), 0), state FROM person GROUP BY state";
         let expected = "\
-        Projection: #SUM(if(state Eq Utf8(\"CA\"),Int64(1),Int64(0))) Divide if(#COUNT(state) NotEq Int64(0), #COUNT(state)), #state\
-        \n  Aggregate: groupBy=[[#state]], aggr=[[SUM(if(#state Eq Utf8(\"CA\"), Int64(1), Int64(0))), COUNT(#state)]]\
+        Projection: #SUM(CASE WHEN #state Eq Utf8(\"CA\") THEN Int64(1) ELSE Int64(0) END) Divide nullif(#COUNT(state), Int64(0)), #state\
+        \n  Aggregate: groupBy=[[#state]], aggr=[[SUM(CASE WHEN #state Eq Utf8(\"CA\") THEN Int64(1) ELSE Int64(0) END), COUNT(#state)]]\
         \n    TableScan: person projection=None";
 
         quick_test(sql, expected);
