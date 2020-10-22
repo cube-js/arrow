@@ -823,40 +823,6 @@ impl<'a, S: SchemaProvider> SqlToRel<'a, S> {
                 })
             }
 
-            SQLExpr::Case {
-                operand,
-                conditions,
-                results,
-                else_result,
-            } => {
-                if operand.is_some() {
-                    return Err(ExecutionError::ExecutionError(format!(
-                        "Operand in CASE is not supported: {:?}",
-                        operand
-                    )));
-                }
-
-                let mut if_args = Vec::new();
-
-                let condition_with_results = conditions.iter().zip(results.iter());
-
-                for (condition, res) in condition_with_results {
-                    if_args.push(self.sql_to_rex(condition, schema, aliased_schema)?);
-                    if_args.push(self.sql_to_rex(res, schema, aliased_schema)?);
-                }
-
-                if let Some(res) = else_result {
-                    if_args.push(self.sql_to_rex(res, schema, aliased_schema)?)
-                }
-
-                let if_fn = functions::BuiltinScalarFunction::from_str("if")?;
-
-                Ok(Expr::ScalarFunction {
-                    fun: if_fn,
-                    args: if_args,
-                })
-            }
-
             SQLExpr::Function(function) => {
                 // TODO parser should do lowercase?
                 let name: String = function.name.to_string().to_lowercase();
