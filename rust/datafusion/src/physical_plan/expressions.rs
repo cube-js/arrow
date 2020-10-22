@@ -33,6 +33,9 @@ use arrow::compute::kernels::arithmetic::{add, divide, multiply, subtract};
 use arrow::compute::kernels::boolean::{and, or};
 use arrow::compute::kernels::comparison::{eq, gt, gt_eq, lt, lt_eq, neq};
 use arrow::compute::kernels::comparison::{
+    eq_bool, gt_bool, gt_eq_bool, lt_bool, lt_eq_bool, neq_bool,
+};
+use arrow::compute::kernels::comparison::{
     eq_scalar, gt_eq_scalar, gt_scalar, lt_eq_scalar, lt_scalar, neq_scalar,
 };
 use arrow::compute::kernels::comparison::{
@@ -1009,6 +1012,21 @@ macro_rules! compute_op_scalar {
     }};
 }
 
+/// Invoke a compute kernel on a pair of binary data arrays for boolean
+macro_rules! compute_bool_op {
+    ($LEFT:expr, $RIGHT:expr, $OP:ident, $DT:ident) => {{
+        let ll = $LEFT
+            .as_any()
+            .downcast_ref::<$DT>()
+            .expect("compute_op failed to downcast array");
+        let rr = $RIGHT
+            .as_any()
+            .downcast_ref::<$DT>()
+            .expect("compute_op failed to downcast array");
+        Ok(Arc::new(paste::expr! {[<$OP _bool>]}(&ll, &rr)?))
+    }};
+}
+
 /// Invoke a compute kernel on a pair of arrays
 macro_rules! compute_op {
     ($LEFT:expr, $RIGHT:expr, $OP:ident, $DT:ident) => {{
@@ -1119,6 +1137,7 @@ macro_rules! binary_array_op {
             DataType::UInt64 => compute_op!($LEFT, $RIGHT, $OP, UInt64Array),
             DataType::Float32 => compute_op!($LEFT, $RIGHT, $OP, Float32Array),
             DataType::Float64 => compute_op!($LEFT, $RIGHT, $OP, Float64Array),
+            DataType::Boolean => compute_bool_op!($LEFT, $RIGHT, $OP, BooleanArray),
             DataType::Utf8 => compute_utf8_op!($LEFT, $RIGHT, $OP, StringArray),
             DataType::Timestamp(TimeUnit::Nanosecond, None) => {
                 compute_op!($LEFT, $RIGHT, $OP, TimestampNanosecondArray)
