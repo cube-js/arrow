@@ -58,6 +58,7 @@ use arrow::{
     datatypes::Field,
 };
 use compute::can_cast_types;
+use std::any::Any;
 
 /// returns the name of the state
 pub fn format_state_name(name: &str, state_name: &str) -> String {
@@ -104,6 +105,10 @@ impl PhysicalExpr for Column {
         Ok(ColumnarValue::Array(
             batch.column(batch.schema().index_of(&self.name)?).clone(),
         ))
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 
@@ -1641,6 +1646,10 @@ impl PhysicalExpr for BinaryExpr {
         };
         result.map(|a| ColumnarValue::Array(a))
     }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
 }
 
 /// Create a binary expression whose arguments are correctly coerced.
@@ -1784,6 +1793,10 @@ impl PhysicalExpr for NotExpr {
             }
         }
     }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
 }
 
 /// Creates a unary expression NOT
@@ -1858,6 +1871,10 @@ impl PhysicalExpr for NegativeExpr {
             }
         }
     }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
 }
 
 /// Creates a unary expression NEGATIVE
@@ -1920,6 +1937,10 @@ impl PhysicalExpr for IsNullExpr {
             )),
         }
     }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
 }
 
 /// Create an IS NULL expression
@@ -1964,6 +1985,10 @@ impl PhysicalExpr for IsNotNullExpr {
                 ScalarValue::Boolean(Some(!scalar.is_null())),
             )),
         }
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 
@@ -2378,6 +2403,10 @@ impl PhysicalExpr for CaseExpr {
             self.case_when_no_expr(batch)
         }
     }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
 }
 
 /// CAST expression casts an expression to a specific data type
@@ -2445,6 +2474,10 @@ impl PhysicalExpr for CastExpr {
             }
         }
     }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
 }
 
 /// Return a PhysicalExpression representing `expr` casted to
@@ -2466,6 +2499,30 @@ pub fn cast(
             "Unsupported CAST from {:?} to {:?}",
             expr_type, cast_type
         )))
+    }
+}
+
+/// Evaluated Literal as an array for purpose of scalar evaluation optimizations
+#[derive(Debug)]
+pub struct ConstArray {
+    value: ScalarValue,
+}
+
+impl ConstArray {
+    /// Evaluate PhysicalExpr for a single row dummy batch
+    pub fn evaluate(expr: Arc<dyn PhysicalExpr>) -> Result<Arc<dyn PhysicalExpr>> {
+        // This is a dummy array. Consider using special batch implementation?
+        let array = Int32Array::from(vec![1]);
+        let batch = RecordBatch::try_new(
+            Arc::new(Schema::new(vec![Field::new("id", DataType::Int32, true)])),
+            vec![Arc::new(array)],
+        )?;
+        let value = expr.evaluate(&batch)?;
+        let scalar = match value {
+            ColumnarValue::Scalar(value) => value,
+            ColumnarValue::Array(a) => ScalarValue::try_from_array(&a, 0)?,
+        };
+        Ok(Arc::new(Literal::new(scalar)))
     }
 }
 
@@ -2499,6 +2556,10 @@ impl PhysicalExpr for Literal {
 
     fn evaluate(&self, _batch: &RecordBatch) -> Result<ColumnarValue> {
         Ok(ColumnarValue::Scalar(self.value.clone()))
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 

@@ -265,6 +265,12 @@ impl ScalarValue {
             DataType::Int32 => typed_cast!(array, index, Int32Array, Int32),
             DataType::Int16 => typed_cast!(array, index, Int16Array, Int16),
             DataType::Int8 => typed_cast!(array, index, Int8Array, Int8),
+            DataType::Timestamp(TimeUnit::Microsecond, None) => {
+                typed_cast!(array, index, TimestampMicrosecondArray, TimeMicrosecond)
+            }
+            DataType::Timestamp(TimeUnit::Nanosecond, None) => {
+                typed_cast!(array, index, TimestampNanosecondArray, TimeNanosecond)
+            }
             DataType::Utf8 => typed_cast!(array, index, StringArray, Utf8),
             DataType::LargeUtf8 => typed_cast!(array, index, LargeStringArray, LargeUtf8),
             DataType::List(nested_type) => {
@@ -404,7 +410,24 @@ impl TryFrom<ScalarValue> for i32 {
     }
 }
 
-impl_try_from!(Int64, i64);
+// special implementation for i64 because of Timestamp
+impl TryFrom<ScalarValue> for i64 {
+    type Error = DataFusionError;
+
+    fn try_from(value: ScalarValue) -> Result<Self> {
+        match value {
+            ScalarValue::Int64(Some(inner_value))
+            | ScalarValue::TimeMicrosecond(Some(inner_value)) => Ok(inner_value),
+            ScalarValue::TimeNanosecond(Some(inner_value)) => Ok(inner_value),
+            _ => Err(DataFusionError::Internal(format!(
+                "Cannot convert {:?} to {}",
+                value,
+                std::any::type_name::<Self>()
+            ))),
+        }
+    }
+}
+
 impl_try_from!(UInt8, u8);
 impl_try_from!(UInt16, u16);
 impl_try_from!(UInt32, u32);
