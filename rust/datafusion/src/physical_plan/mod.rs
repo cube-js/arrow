@@ -143,6 +143,8 @@ pub trait PhysicalExpr: Send + Sync + Display + Debug {
     fn nullable(&self, input_schema: &Schema) -> Result<bool>;
     /// Evaluate an expression against a RecordBatch
     fn evaluate(&self, batch: &RecordBatch) -> Result<ColumnarValue>;
+    /// Get Any reference
+    fn as_any(&self) -> &dyn Any;
 }
 
 /// An aggregate expression that:

@@ -576,10 +576,10 @@ impl<'a, S: SchemaProvider> SqlToRel<'a, S> {
                                     if n >= 1 && n - 1 < schema.fields().len() {
                                         Ok(Expr::Column(schema.field(n - 1).name().to_string()))
                                     } else {
-                                        Err(ExecutionError::General(format!("Select column reference should be within 1..{} but found {}", schema.fields().len(), n)))
+                                        Err(DataFusionError::Execution(format!("Select column reference should be within 1..{} but found {}", schema.fields().len(), n)))
                                     }
                                 },
-                                Err(_) => Err(ExecutionError::General(format!("Can't parse {} as number", n))),
+                                Err(_) => Err(DataFusionError::Execution(format!("Can't parse {} as number", n))),
                             }
                             _ => self.sql_to_rex(&e.expr, &input_schema, &plan.aliased_schema())
                         }?
@@ -1324,8 +1324,8 @@ mod tests {
     fn select_group_by_needs_projection_with_case() {
         let sql = "SELECT SUM(CASE WHEN state = 'CA' THEN 1 ELSE 0 END) / NULLIF(COUNT(state), 0), state FROM person GROUP BY state";
         let expected = "\
-        Projection: #SUM(if(state Eq Utf8(\"CA\"),Int64(1),Int64(0))) Divide if(#COUNT(state) NotEq Int64(0), #COUNT(state)), #state\
-        \n  Aggregate: groupBy=[[#state]], aggr=[[SUM(if(#state Eq Utf8(\"CA\"), Int64(1), Int64(0))), COUNT(#state)]]\
+        Projection: #SUM(CASE WHEN #state Eq Utf8(\"CA\") THEN Int64(1) ELSE Int64(0) END) Divide if(#COUNT(state) NotEq Int64(0), #COUNT(state)), #state\
+        \n  Aggregate: groupBy=[[#state]], aggr=[[SUM(CASE WHEN #state Eq Utf8(\"CA\") THEN Int64(1) ELSE Int64(0) END), COUNT(#state)]]\
         \n    TableScan: person projection=None";
 
         quick_test(sql, expected);
