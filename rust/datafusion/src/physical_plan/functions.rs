@@ -48,6 +48,7 @@ use arrow::{
     record_batch::RecordBatch,
 };
 use fmt::{Debug, Formatter};
+use std::any::Any;
 use std::{fmt, str::FromStr, sync::Arc};
 
 /// A function's signature, which defines the function's supported argument types.
@@ -409,6 +410,10 @@ impl PhysicalExpr for ScalarFunctionExpr {
         // evaluate the function
         let fun = self.fun.as_ref();
         (fun)(&inputs)
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 

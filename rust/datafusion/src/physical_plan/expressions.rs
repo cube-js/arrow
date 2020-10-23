@@ -21,14 +21,17 @@ use std::convert::TryFrom;
 use std::fmt;
 use std::sync::Arc;
 
+use crate::arrow::array::Array;
+use crate::arrow::array::PrimitiveArrayOps;
 use crate::error::{DataFusionError, Result};
 use crate::logical_plan::Operator;
 use crate::physical_plan::{Accumulator, AggregateExpr, PhysicalExpr};
 use crate::scalar::ScalarValue;
 use arrow::array::{
     BooleanBuilder, Float32Builder, Float64Builder, Int16Builder, Int32Builder,
-    Int64Builder, Int8Builder, LargeStringArray, StringBuilder, UInt16Builder,
-    UInt32Builder, UInt64Builder, UInt8Builder,
+    Int64Builder, Int8Builder, LargeStringArray, StringBuilder,
+    TimestampNanosecondBuilder, UInt16Builder, UInt32Builder, UInt64Builder,
+    UInt8Builder,
 };
 use arrow::compute;
 use arrow::compute::kernels;
@@ -52,6 +55,7 @@ use arrow::{
     },
     datatypes::Field,
 };
+use std::any::Any;
 use compute::can_cast_types;
 
 /// returns the name of the state
@@ -97,6 +101,10 @@ impl PhysicalExpr for Column {
     /// Evaluate the expression
     fn evaluate(&self, batch: &RecordBatch) -> Result<ArrayRef> {
         Ok(batch.column(batch.schema().index_of(&self.name)?).clone())
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 
@@ -1491,6 +1499,10 @@ impl PhysicalExpr for BinaryExpr {
             )),
         }
     }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
 }
 
 /// Create a binary expression whose arguments are correctly coerced.
@@ -1540,6 +1552,10 @@ impl PhysicalExpr for NotExpr {
             .downcast_ref::<BooleanArray>()
             .expect("boolean_op failed to downcast array");
         return Ok(Arc::new(arrow::compute::kernels::boolean::not(arg)?));
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 
@@ -1597,6 +1613,10 @@ impl PhysicalExpr for IsNullExpr {
         let arg = self.arg.evaluate(batch)?;
         return Ok(Arc::new(arrow::compute::is_null(&arg)?));
     }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
 }
 
 /// Create an IS NULL expression
@@ -1634,6 +1654,10 @@ impl PhysicalExpr for IsNotNullExpr {
     fn evaluate(&self, batch: &RecordBatch) -> Result<ArrayRef> {
         let arg = self.arg.evaluate(batch)?;
         return Ok(Arc::new(arrow::compute::is_not_null(&arg)?));
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 
@@ -1681,6 +1705,10 @@ impl PhysicalExpr for CastExpr {
         let value = self.expr.evaluate(batch)?;
         Ok(kernels::cast::cast(&value, &self.cast_type)?)
     }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
 }
 
 /// Return a PhysicalExpression representing `expr` casted to
@@ -1702,6 +1730,119 @@ pub fn cast(
             "Unsupported CAST from {:?} to {:?}",
             expr_type, cast_type
         )))
+    }
+}
+
+/// Build array containing the same value repeated from a single row array
+macro_rules! build_const_array {
+    ($BATCH:ident, $BUILDER:ident, $ARRAYTYPE:ident, $VALUE:expr) => {{
+        let mut builder = $BUILDER::new($BATCH.num_rows());
+        let array = $VALUE.as_any().downcast_ref::<$ARRAYTYPE>().unwrap();
+        if array.is_null(0) {
+            for _ in 0..$BATCH.num_rows() {
+                builder.append_null()?;
+            }
+        } else {
+            for _ in 0..$BATCH.num_rows() {
+                builder.append_value(array.value(0))?;
+            }
+        }
+        Ok(Arc::new(builder.finish()))
+    }};
+}
+
+/// Evaluated Literal as an array for purpose of scalar evaluation optimizations
+#[derive(Debug)]
+pub struct ConstArray {
+    value: ArrayRef,
+}
+
+impl ConstArray {
+    /// Create new const array based on a single row array
+    pub fn new(value: ArrayRef) -> Self {
+        Self { value }
+    }
+
+    /// Evaluate PhysicalExpr for a single row dummy batch
+    pub fn evaluate(expr: Arc<dyn PhysicalExpr>) -> Result<Arc<dyn PhysicalExpr>> {
+        // This is a dummy array. Consider using special batch implementation?
+        let array = Int32Array::from(vec![1]);
+        let batch = RecordBatch::try_new(
+            Arc::new(Schema::new(vec![Field::new("id", DataType::Int32, true)])),
+            vec![Arc::new(array)],
+        )?;
+        Ok(Arc::new(Self::new(expr.evaluate(&batch)?)))
+    }
+}
+
+impl PhysicalExpr for ConstArray {
+    fn data_type(&self, _: &Schema) -> Result<DataType> {
+        Ok(self.value.data_type().clone())
+    }
+
+    fn nullable(&self, _: &Schema) -> Result<bool> {
+        Ok(self.value.null_count() > 0)
+    }
+
+    fn evaluate(&self, batch: &RecordBatch) -> Result<ArrayRef> {
+        match &self.value.data_type() {
+            DataType::Int8 => {
+                build_const_array!(batch, Int8Builder, Int8Array, self.value)
+            }
+            DataType::Int16 => {
+                build_const_array!(batch, Int16Builder, Int16Array, self.value)
+            }
+            DataType::Int32 => {
+                build_const_array!(batch, Int32Builder, Int32Array, self.value)
+            }
+            DataType::Int64 => {
+                build_const_array!(batch, Int64Builder, Int64Array, self.value)
+            }
+            DataType::UInt8 => {
+                build_const_array!(batch, UInt8Builder, UInt8Array, self.value)
+            }
+            DataType::UInt16 => {
+                build_const_array!(batch, UInt16Builder, UInt16Array, self.value)
+            }
+            DataType::UInt32 => {
+                build_const_array!(batch, UInt32Builder, UInt32Array, self.value)
+            }
+            DataType::UInt64 => {
+                build_const_array!(batch, UInt64Builder, UInt64Array, self.value)
+            }
+            DataType::Float32 => {
+                build_const_array!(batch, Float32Builder, Float32Array, self.value)
+            }
+            DataType::Float64 => {
+                build_const_array!(batch, Float64Builder, Float64Array, self.value)
+            }
+            DataType::Timestamp(TimeUnit::Nanosecond, _) => build_const_array!(
+                batch,
+                TimestampNanosecondBuilder,
+                TimestampNanosecondArray,
+                self.value
+            ),
+            DataType::Boolean => {
+                build_const_array!(batch, BooleanBuilder, BooleanArray, self.value)
+            }
+            DataType::Utf8 => {
+                build_const_array!(batch, StringBuilder, StringArray, self.value)
+            }
+            other => Err(ExecutionError::General(format!(
+                "Unsupported const array type {:?}",
+                other
+            ))),
+        }
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+impl fmt::Display for ConstArray {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:?}", self.value)
     }
 }
 
@@ -1794,6 +1935,10 @@ impl PhysicalExpr for Literal {
                 other
             ))),
         }
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 

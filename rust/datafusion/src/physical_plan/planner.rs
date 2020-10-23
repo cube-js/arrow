@@ -27,7 +27,7 @@ use crate::logical_plan::{
 };
 use crate::physical_plan::csv::{CsvExec, CsvReadOptions};
 use crate::physical_plan::explain::ExplainExec;
-use crate::physical_plan::expressions::{Column, Literal, PhysicalSortExpr};
+use crate::physical_plan::expressions::{Column, ConstArray, Literal, PhysicalSortExpr};
 use crate::physical_plan::filter::FilterExec;
 use crate::physical_plan::hash_aggregate::{AggregateMode, HashAggregateExec};
 use crate::physical_plan::limit::{GlobalLimitExec, LocalLimitExec};
@@ -425,31 +425,45 @@ impl DefaultPhysicalPlanner {
             Expr::BinaryExpr { left, op, right } => {
                 let lhs = self.create_physical_expr(left, input_schema, ctx_state)?;
                 let rhs = self.create_physical_expr(right, input_schema, ctx_state)?;
-                binary(lhs, op.clone(), rhs, input_schema)
+                self.evaluate_constants(
+                    binary(lhs.clone(), op.clone(), rhs.clone(), input_schema)?,
+                    vec![lhs, rhs],
+                )
             }
-            Expr::Cast { expr, data_type } => expressions::cast(
-                self.create_physical_expr(expr, input_schema, ctx_state)?,
-                input_schema,
-                data_type.clone(),
-            ),
-            Expr::Not(expr) => expressions::not(
-                self.create_physical_expr(expr, input_schema, ctx_state)?,
-                input_schema,
-            ),
-            Expr::IsNull(expr) => expressions::is_null(self.create_physical_expr(
-                expr,
-                input_schema,
-                ctx_state,
-            )?),
-            Expr::IsNotNull(expr) => expressions::is_not_null(
-                self.create_physical_expr(expr, input_schema, ctx_state)?,
-            ),
+            Expr::Cast { expr, data_type } => {
+                let input = self.create_physical_expr(expr, input_schema, ctx_state)?;
+                self.evaluate_constants(
+                    expressions::cast(input.clone(), input_schema, data_type.clone())?,
+                    vec![input],
+                )
+            }
+            Expr::Not(expr) => {
+                let input = self.create_physical_expr(expr, input_schema, ctx_state)?;
+                self.evaluate_constants(
+                    expressions::not(input.clone(), input_schema)?,
+                    vec![input],
+                )
+            }
+            Expr::IsNull(expr) => {
+                let input = self.create_physical_expr(expr, input_schema, ctx_state)?;
+                self.evaluate_constants(expressions::is_null(input.clone())?, vec![input])
+            }
+            Expr::IsNotNull(expr) => {
+                let input = self.create_physical_expr(expr, input_schema, ctx_state)?;
+                self.evaluate_constants(
+                    expressions::is_not_null(input.clone())?,
+                    vec![input],
+                )
+            }
             Expr::ScalarFunction { fun, args } => {
                 let physical_args = args
                     .iter()
                     .map(|e| self.create_physical_expr(e, input_schema, ctx_state))
                     .collect::<Result<Vec<_>>>()?;
-                functions::create_physical_expr(fun, &physical_args, input_schema)
+                self.evaluate_constants(
+                    functions::create_physical_expr(fun, &physical_args, input_schema)?,
+                    physical_args,
+                )
             }
             Expr::ScalarUDF { fun, args } => {
                 let mut physical_args = vec![];
@@ -461,16 +475,34 @@ impl DefaultPhysicalPlanner {
                     )?);
                 }
 
-                udf::create_physical_expr(
-                    fun.clone().as_ref(),
-                    &physical_args,
-                    input_schema,
+                self.evaluate_constants(
+                    udf::create_physical_expr(
+                        fun.clone().as_ref(),
+                        &physical_args,
+                        input_schema,
+                    )?,
+                    physical_args,
                 )
             }
             other => Err(DataFusionError::NotImplemented(format!(
                 "Physical plan does not support logical expression {:?}",
                 other
             ))),
+        }
+    }
+
+    fn evaluate_constants(
+        &self,
+        res_expr: Arc<dyn PhysicalExpr>,
+        inputs: Vec<Arc<dyn PhysicalExpr>>,
+    ) -> Result<Arc<dyn PhysicalExpr>> {
+        if inputs.iter().all(|i| {
+            i.as_any().downcast_ref::<Literal>().is_some()
+                || i.as_any().downcast_ref::<ConstArray>().is_some()
+        }) {
+            Ok(ConstArray::evaluate(res_expr)?)
+        } else {
+            Ok(res_expr)
         }
     }
 
