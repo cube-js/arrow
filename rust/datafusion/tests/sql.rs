@@ -1321,7 +1321,10 @@ async fn execute(ctx: &mut ExecutionContext, sql: &str) -> Vec<Vec<String>> {
     let results = ctx.collect(plan).await.expect(&msg);
 
     assert_eq!(logical_schema.as_ref(), optimized_logical_schema.as_ref());
-    assert_eq!(logical_schema.as_ref(), physical_schema.as_ref());
+    assert_eq!(
+        logical_schema.as_ref().fields().iter().map(|f| (f.name().to_string(), f.data_type().clone())).collect::<Vec<_>>(),
+        physical_schema.as_ref().fields().iter().map(|f| (f.name().to_string(), f.data_type().clone())).collect::<Vec<_>>()
+    );
 
     result_vec(&results)
 }
