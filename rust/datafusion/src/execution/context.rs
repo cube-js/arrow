@@ -252,7 +252,7 @@ impl ExecutionContext {
             projected_schema: schema,
             projection: None,
             // TODO
-            alias: None
+            alias: None,
         };
         Ok(Arc::new(DataFrameImpl::new(
             self.state.clone(),
