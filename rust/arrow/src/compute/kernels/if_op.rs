@@ -18,8 +18,7 @@
 //! If flow control kernel
 
 use crate::array::{
-    Array, ArrayData, BooleanArray, PrimitiveArray, StringArray,
-    StringBuilder,
+    Array, ArrayData, BooleanArray, PrimitiveArray, StringArray, StringBuilder,
 };
 use crate::buffer::Buffer;
 use crate::datatypes;

@@ -94,7 +94,13 @@ impl ParquetExec {
             let mut arrow_reader = ParquetFileArrowReader::new(file_reader);
             let schema = arrow_reader.get_schema()?;
 
-            Ok(Self::new(filenames, schema, projection, batch_size))
+            Ok(Self::new(
+                filenames,
+                schema,
+                projection,
+                batch_size,
+                row_group_filter,
+            ))
         }
     }
 
@@ -104,6 +110,7 @@ impl ParquetExec {
         schema: Schema,
         projection: Option<Vec<usize>>,
         batch_size: usize,
+        row_group_filter: Option<Arc<dyn Fn(&RowGroupMetaData) -> bool + Send + Sync>>,
     ) -> Self {
         let projection = match projection {
             Some(p) => p,
@@ -122,7 +129,7 @@ impl ParquetExec {
             schema: Arc::new(projected_schema),
             projection,
             batch_size,
-            row_group_filter: None
+            row_group_filter,
         }
     }
 }

@@ -766,9 +766,10 @@ fn create_key(
             }
             x => {
                 // This is internal because we should have caught this before.
-                return Err(DataFusionError::Internal(
-                    format!("Unsupported GROUP BY data type: {:?}", x),
-                ));
+                return Err(DataFusionError::Internal(format!(
+                    "Unsupported GROUP BY data type: {:?}",
+                    x
+                )));
             }
         }
     }
