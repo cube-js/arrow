@@ -133,13 +133,13 @@ impl<'a, S: SchemaProvider> SqlToRel<'a, S> {
                         })
                         .collect::<Vec<_>>();
                     if inputs.len() == 0 {
-                        return Err(DataFusionError::Execution(format!(
+                        return Err(DataFusionError::Plan(format!(
                             "Empty UNION: {}",
                             set_expr
                         )));
                     }
                     if !inputs.iter().all(|s| s.schema() == inputs[0].schema()) {
-                        return Err(DataFusionError::Execution(format!(
+                        return Err(DataFusionError::Plan(format!(
                             "UNION ALL schema expected to be the same across selects"
                         )));
                     }
@@ -149,7 +149,7 @@ impl<'a, S: SchemaProvider> SqlToRel<'a, S> {
                         alias: alias.clone(),
                     })
                 }
-                _ => Err(DataFusionError::NotImplemented(
+                _ => Err(DataFusionError::Plan(
                     format!("Only UNION ALL is supported: {}", set_expr).to_owned(),
                 )),
             },
