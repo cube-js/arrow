@@ -54,8 +54,8 @@ use arrow::{
     },
     datatypes::Field,
 };
-use std::any::Any;
 use compute::can_cast_types;
+use std::any::Any;
 
 /// returns the name of the state
 pub fn format_state_name(name: &str, state_name: &str) -> String {
