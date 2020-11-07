@@ -98,7 +98,7 @@ pub fn data_types(
         Signature::IfFn => {
             let mut input_return_types = Vec::new();
             if current_types.len() < 2 {
-                return Err(ExecutionError::General(format!(
+                return Err(DataFusionError::Execution(format!(
                     "If requires at least 2 arguments but found {:?}",
                     current_types
                 )));
@@ -233,7 +233,7 @@ pub fn common_type(data_types: &Vec<DataType>) -> Result<DataType> {
         } else if can_coerce_from(b, &resolved) {
             Ok(b.clone())
         } else {
-            Err(ExecutionError::ExecutionError(format!(
+            Err(DataFusionError::Execution(format!(
                 "Can't find common type between {:?} and {:?}",
                 resolved, b
             )))

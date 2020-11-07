@@ -38,7 +38,6 @@ use arrow::{
     array::{self, ArrayRef},
     datatypes::Schema,
 };
-use arrow::array::TimestampMicrosecondArray;
 use futures::{Stream, TryStreamExt};
 
 /// Stream of record batches

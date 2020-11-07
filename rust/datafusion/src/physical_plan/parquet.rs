@@ -122,7 +122,7 @@ impl ParquetExec {
             schema: Arc::new(projected_schema),
             projection,
             batch_size,
-            row_group_filter
+            row_group_filter: None
         }
     }
 }
@@ -230,7 +230,6 @@ impl FilteredFileReader {
                     file_meta.num_rows(),
                     file_meta.created_by().clone(),
                     file_meta.key_value_metadata().clone(),
-                    Rc::new(file_meta.schema().clone()),
                     file_meta.schema_descr_ptr(),
                     file_meta.column_orders().map(|v| v.clone()),
                 ),

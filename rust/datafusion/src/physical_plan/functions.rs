@@ -287,7 +287,7 @@ pub fn create_physical_expr(
                     }
                 },
             )?;
-            res.ok_or(ExecutionError::ExecutionError("Empty if".to_string()))
+            res.ok_or(DataFusionError::Execution("Empty if".to_string()))
         },
         BuiltinScalarFunction::Array => |args| Ok(array_expressions::array(args)?),
     });

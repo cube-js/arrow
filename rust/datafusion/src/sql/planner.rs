@@ -130,13 +130,13 @@ impl<'a, S: SchemaProvider> SqlToRel<'a, S> {
                         })
                         .collect::<Vec<_>>();
                     if inputs.len() == 0 {
-                        return Err(ExecutionError::ExecutionError(format!(
+                        return Err(DataFusionError::Plan(format!(
                             "Empty UNION: {}",
                             set_expr
                         )));
                     }
                     if !inputs.iter().all(|s| s.schema() == inputs[0].schema()) {
-                        return Err(ExecutionError::ExecutionError(format!(
+                        return Err(DataFusionError::Plan(format!(
                             "UNION ALL schema expected to be the same across selects"
                         )));
                     }
@@ -146,7 +146,7 @@ impl<'a, S: SchemaProvider> SqlToRel<'a, S> {
                         alias: alias.clone(),
                     })
                 }
-                _ => Err(ExecutionError::NotImplemented(
+                _ => Err(DataFusionError::Plan(
                     format!("Only UNION ALL is supported: {}", set_expr).to_owned(),
                 )),
             },
@@ -382,15 +382,15 @@ impl<'a, S: SchemaProvider> SqlToRel<'a, S> {
                         Ok(n) => {
                             if n - 1 < projection_expr.len() && n >= 1 {
                                 if is_aggregate_expr(&projection_expr[n - 1]) {
-                                    Err(ExecutionError::General(format!("Can't group by aggregate function: {:?}", projection_expr[n - 1])))
+                                    Err(DataFusionError::Execution(format!("Can't group by aggregate function: {:?}", projection_expr[n - 1])))
                                 } else {
                                     Ok(projection_expr[n - 1].clone())
                                 }
                             } else {
-                                Err(ExecutionError::General(format!("Select column reference should be within 1..{} but found {}", projection_expr.len(), n)))
+                                Err(DataFusionError::Execution(format!("Select column reference should be within 1..{} but found {}", projection_expr.len(), n)))
                             }
                         },
-                        Err(_) => Err(ExecutionError::General(format!("Can't parse {} as number", n))),
+                        Err(_) => Err(DataFusionError::Execution(format!("Can't parse {} as number", n))),
                     }
                     _ => self.sql_to_rex(&e, &input.schema(), &input.aliased_schema())
                 }
@@ -503,10 +503,10 @@ impl<'a, S: SchemaProvider> SqlToRel<'a, S> {
                                     if n >= 1 && n - 1 < schema.fields().len() {
                                         Ok(Expr::Column(schema.field(n - 1).name().to_string()))
                                     } else {
-                                        Err(ExecutionError::General(format!("Select column reference should be within 1..{} but found {}", schema.fields().len(), n)))
+                                        Err(DataFusionError::Execution(format!("Select column reference should be within 1..{} but found {}", schema.fields().len(), n)))
                                     }
                                 },
-                                Err(_) => Err(ExecutionError::General(format!("Can't parse {} as number", n))),
+                                Err(_) => Err(DataFusionError::Execution(format!("Can't parse {} as number", n))),
                             }
                             _ => self.sql_to_rex(&e.expr, &input_schema, &plan.aliased_schema())
                         }?
@@ -586,7 +586,7 @@ impl<'a, S: SchemaProvider> SqlToRel<'a, S> {
                 } else if aliased_schema.contains_key(&var_names[0]) {
                     match schema.field_with_name(&var_names[1]) {
                         Ok(field) => Ok(Expr::Column(field.name().clone())),
-                        Err(_) => Err(ExecutionError::ExecutionError(format!(
+                        Err(_) => Err(DataFusionError::Execution(format!(
                             "Invalid identifier '{}' for schema {}",
                             &var_names[1],
                             schema.to_string()
@@ -673,7 +673,7 @@ impl<'a, S: SchemaProvider> SqlToRel<'a, S> {
                 else_result,
             } => {
                 if operand.is_some() {
-                    return Err(ExecutionError::ExecutionError(format!(
+                    return Err(DataFusionError::Plan(format!(
                         "Operand in CASE is not supported: {:?}",
                         operand
                     )));
@@ -718,7 +718,7 @@ impl<'a, S: SchemaProvider> SqlToRel<'a, S> {
                 if name.to_lowercase() == "nullif" {
                     if let Ok(if_fn) = functions::BuiltinScalarFunction::from_str("if") {
                         if function.args.len() != 2 {
-                            return Err(ExecutionError::General(format!(
+                            return Err(DataFusionError::Execution(format!(
                                 "nullif expects 2 arguments but found: {:?}",
                                 function.args
                             )));

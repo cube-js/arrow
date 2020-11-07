@@ -22,7 +22,6 @@ use std::fmt;
 use std::sync::Arc;
 
 use crate::arrow::array::Array;
-use crate::arrow::array::PrimitiveArrayOps;
 use crate::error::{DataFusionError, Result};
 use crate::logical_plan::Operator;
 use crate::physical_plan::{Accumulator, AggregateExpr, PhysicalExpr};
@@ -1147,7 +1146,7 @@ macro_rules! condition_primitive_array_op {
             DataType::Utf8 => {
                 string_condition_op!($CONDITION, $LEFT, $RIGHT, StringArray)
             }
-            other => Err(ExecutionError::General(format!(
+            other => Err(DataFusionError::Execution(format!(
                 "Unsupported data type {:?}",
                 other
             ))),
@@ -1828,7 +1827,7 @@ impl PhysicalExpr for ConstArray {
             DataType::Utf8 => {
                 build_const_array!(batch, StringBuilder, StringArray, self.value)
             }
-            other => Err(ExecutionError::General(format!(
+            other => Err(DataFusionError::Execution(format!(
                 "Unsupported const array type {:?}",
                 other
             ))),

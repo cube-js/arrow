@@ -175,7 +175,7 @@ impl ExecutionPlan for UnionExec {
         Ok(Arc::new(UnionExec::new(children)))
     }
 
-    async fn execute(&self, partition: usize) -> Result<SendableRecordBatchReader> {
+    async fn execute(&self, partition: usize) -> Result<SendableRecordBatchStream> {
         self.inputs[partition].execute(0).await
     }
 }
