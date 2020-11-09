@@ -33,10 +33,11 @@ use arrow::{array::ArrayRef, datatypes::DataType};
 
 use crate::error::{DataFusionError, Result};
 use arrow::datatypes::TimeUnit;
+use serde_derive::{Deserialize, Serialize};
 
 /// Represents a dynamically typed, nullable single value.
 /// This is the single-valued counter-part of arrow’s `Array`.
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub enum ScalarValue {
     /// true or false value
     Boolean(Option<bool>),
