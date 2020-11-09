@@ -36,6 +36,7 @@ use crate::physical_plan::distinct_expressions;
 use crate::physical_plan::expressions;
 use arrow::datatypes::{DataType, Schema};
 use expressions::{avg_return_type, sum_return_type};
+use serde_derive::{Deserialize, Serialize};
 use std::{fmt, str::FromStr, sync::Arc};
 
 /// the implementation of an aggregate function
@@ -48,7 +49,7 @@ pub type StateTypeFunction =
     Arc<dyn Fn(&DataType) -> Result<Arc<Vec<DataType>>> + Send + Sync>;
 
 /// Enum of all built-in scalar functions
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub enum AggregateFunction {
     /// count
     Count,

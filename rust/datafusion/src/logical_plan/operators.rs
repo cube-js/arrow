@@ -15,12 +15,13 @@
 // specific language governing permissions and limitations
 // under the License.
 
+use serde_derive::{Deserialize, Serialize};
 use std::{fmt, ops};
 
 use super::{binary_expr, Expr};
 
 /// Operators applied to expressions
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Operator {
     /// Expressions are equal
     Eq,
