@@ -173,7 +173,9 @@ impl Accumulator for DistinctCountAccumulator {
 
     fn evaluate(&self) -> Result<ScalarValue> {
         match &self.count_data_type {
-            DataType::UInt64 => Ok(ScalarValue::UInt64(Some(self.values.iter().unique().count() as u64))),
+            DataType::UInt64 => Ok(ScalarValue::UInt64(Some(
+                self.values.iter().unique().count() as u64,
+            ))),
             t => Err(DataFusionError::Internal(format!(
                 "Invalid data type {:?} for count distinct aggregation",
                 t
