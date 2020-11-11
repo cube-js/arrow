@@ -24,12 +24,11 @@ use std::sync::Arc;
 
 use arrow::datatypes::{DataType, Field};
 
-use fnv::FnvHashSet;
-
 use crate::error::{DataFusionError, Result};
 use crate::physical_plan::group_scalar::GroupByScalar;
 use crate::physical_plan::{Accumulator, AggregateExpr, PhysicalExpr};
 use crate::scalar::ScalarValue;
+use itertools::Itertools;
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
 struct DistinctScalarValues(Vec<GroupByScalar>);
@@ -93,7 +92,7 @@ impl AggregateExpr for DistinctCount {
 
     fn create_accumulator(&self) -> Result<Box<dyn Accumulator>> {
         Ok(Box::new(DistinctCountAccumulator {
-            values: FnvHashSet::default(),
+            values: Vec::new(),
             data_types: self.input_data_types.clone(),
             count_data_type: self.data_type.clone(),
         }))
@@ -102,7 +101,7 @@ impl AggregateExpr for DistinctCount {
 
 #[derive(Debug)]
 struct DistinctCountAccumulator {
-    values: FnvHashSet<DistinctScalarValues>,
+    values: Vec<DistinctScalarValues>,
     data_types: Vec<DataType>,
     count_data_type: DataType,
 }
@@ -111,7 +110,7 @@ impl Accumulator for DistinctCountAccumulator {
     fn update(&mut self, values: &Vec<ScalarValue>) -> Result<()> {
         // If a row has a NULL, it is not included in the final count.
         if !values.iter().any(|v| v.is_null()) {
-            self.values.insert(DistinctScalarValues(
+            self.values.push(DistinctScalarValues(
                 values
                     .iter()
                     .map(GroupByScalar::try_from)
@@ -163,7 +162,7 @@ impl Accumulator for DistinctCountAccumulator {
             })
             .collect::<Vec<_>>();
 
-        self.values.iter().for_each(|distinct_values| {
+        self.values.iter().unique().for_each(|distinct_values| {
             distinct_values.0.iter().enumerate().for_each(
                 |(col_index, distinct_value)| {
                     cols_vec[col_index].push(ScalarValue::from(distinct_value));
@@ -176,7 +175,7 @@ impl Accumulator for DistinctCountAccumulator {
 
     fn evaluate(&self) -> Result<ScalarValue> {
         match &self.count_data_type {
-            DataType::UInt64 => Ok(ScalarValue::UInt64(Some(self.values.len() as u64))),
+            DataType::UInt64 => Ok(ScalarValue::UInt64(Some(self.values.iter().unique().collect::<Vec<_>>().len() as u64))),
             t => {
                 return Err(DataFusionError::Internal(format!(
                     "Invalid data type {:?} for count distinct aggregation",
