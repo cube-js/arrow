@@ -300,6 +300,67 @@ impl<W: Write> StreamWriter<W> {
     }
 }
 
+pub struct MemStreamWriter<W: Write> {
+    /// The object to write to
+    writer: BufWriter<W>,
+    /// IPC write options
+    write_options: IpcWriteOptions,
+    /// A reference to the schema, used in validating record batches
+    schema: Schema,
+    /// Whether the writer footer has been written, and the writer is finished
+    finished: bool,
+}
+
+impl<W: Write> MemStreamWriter<W> {
+    /// Try create a new writer, with the schema written as part of the header
+    pub fn try_new(writer: W, schema: &Schema) -> Result<Self> {
+        let write_options = IpcWriteOptions::default();
+        Self::try_new_with_options(writer, schema, write_options)
+    }
+
+    pub fn try_new_with_options(
+        writer: W,
+        schema: &Schema,
+        write_options: IpcWriteOptions,
+    ) -> Result<Self> {
+        let mut writer = BufWriter::new(writer);
+        // write the schema, set the written bytes to the schema
+        let message = Message::Schema(schema, &write_options);
+        write_message(&mut writer, &message, &write_options)?;
+        Ok(Self {
+            writer,
+            write_options,
+            schema: schema.clone(),
+            finished: false,
+        })
+    }
+
+    /// Write a record batch to the stream
+    pub fn write(&mut self, batch: &RecordBatch) -> Result<()> {
+        if self.finished {
+            return Err(ArrowError::IoError(
+                "Cannot write record batch to stream writer as it is closed".to_string(),
+            ));
+        }
+        let message = Message::RecordBatch(batch, &self.write_options);
+        write_message(&mut self.writer, &message, &self.write_options)?;
+        Ok(())
+    }
+
+    /// Write continuation bytes, and mark the stream as done
+    pub fn finish(mut self) -> Result<W> {
+        write_continuation(&mut self.writer, &self.write_options, 0)?;
+
+        self.finished = true;
+
+        let writer = self.writer;
+
+        Ok(writer
+            .into_inner()
+            .map_err(|e| ArrowError::IoError(e.to_string()))?)
+    }
+}
+
 /// Finish the stream if it is not 'finished' when it goes out of scope
 impl<W: Write> Drop for StreamWriter<W> {
     fn drop(&mut self) {
