@@ -37,6 +37,7 @@ pub(crate) enum GroupByScalar {
     Utf8(Box<String>),
     TimeMicrosecond(i64),
     TimeNanosecond(i64),
+    Boolean(bool),
 }
 
 impl TryFrom<&ScalarValue> for GroupByScalar {
@@ -53,6 +54,7 @@ impl TryFrom<&ScalarValue> for GroupByScalar {
             ScalarValue::UInt32(Some(v)) => GroupByScalar::UInt32(*v),
             ScalarValue::UInt64(Some(v)) => GroupByScalar::UInt64(*v),
             ScalarValue::Utf8(Some(v)) => GroupByScalar::Utf8(Box::new(v.clone())),
+            ScalarValue::Boolean(Some(v)) => GroupByScalar::Boolean(*v),
             ScalarValue::Int8(None)
             | ScalarValue::Int16(None)
             | ScalarValue::Int32(None)
@@ -91,6 +93,7 @@ impl From<&GroupByScalar> for ScalarValue {
             GroupByScalar::Utf8(v) => ScalarValue::Utf8(Some(v.to_string())),
             GroupByScalar::TimeMicrosecond(v) => ScalarValue::TimeMicrosecond(Some(*v)),
             GroupByScalar::TimeNanosecond(v) => ScalarValue::TimeNanosecond(Some(*v)),
+            GroupByScalar::Boolean(v) => ScalarValue::Boolean(Some(*v)),
         }
     }
 }

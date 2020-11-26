@@ -547,6 +547,10 @@ pub struct MemStreamWriter<W: Write> {
     schema: Schema,
     /// Whether the writer footer has been written, and the writer is finished
     finished: bool,
+    /// Keeps track of dictionaries that have been written
+    dictionary_tracker: DictionaryTracker,
+
+    data_gen: IpcDataGenerator,
 }
 
 impl<W: Write> MemStreamWriter<W> {
@@ -561,15 +565,18 @@ impl<W: Write> MemStreamWriter<W> {
         schema: &Schema,
         write_options: IpcWriteOptions,
     ) -> Result<Self> {
+        let data_gen = IpcDataGenerator::default();
         let mut writer = BufWriter::new(writer);
         // write the schema, set the written bytes to the schema
-        let message = Message::Schema(schema, &write_options);
-        write_message(&mut writer, &message, &write_options)?;
+        let encoded_message = data_gen.schema_to_bytes(schema, &write_options);
+        write_message(&mut writer, encoded_message, &write_options)?;
         Ok(Self {
             writer,
             write_options,
             schema: schema.clone(),
             finished: false,
+            dictionary_tracker: DictionaryTracker::new(false),
+            data_gen,
         })
     }
 
@@ -580,8 +587,17 @@ impl<W: Write> MemStreamWriter<W> {
                 "Cannot write record batch to stream writer as it is closed".to_string(),
             ));
         }
-        let message = Message::RecordBatch(batch, &self.write_options);
-        write_message(&mut self.writer, &message, &self.write_options)?;
+
+        let (encoded_dictionaries, encoded_message) = self
+            .data_gen
+            .encoded_batch(batch, &mut self.dictionary_tracker, &self.write_options)
+            .expect("StreamWriter is configured to not error on dictionary replacement");
+
+        for encoded_dictionary in encoded_dictionaries {
+            write_message(&mut self.writer, encoded_dictionary, &self.write_options)?;
+        }
+
+        write_message(&mut self.writer, encoded_message, &self.write_options)?;
         Ok(())
     }
 

@@ -49,7 +49,7 @@ use super::{
 use ahash::RandomState;
 use hashbrown::HashMap;
 
-use arrow::array::{TimestampMicrosecondArray, TimestampNanosecondArray};
+use arrow::array::{BooleanArray, TimestampMicrosecondArray, TimestampNanosecondArray};
 use async_trait::async_trait;
 
 /// Hash aggregate modes
@@ -679,6 +679,7 @@ fn create_batch_from_map(
                     GroupByScalar::TimeNanosecond(n) => {
                         Arc::new(TimestampNanosecondArray::from_vec(vec![*n], None))
                     }
+                    GroupByScalar::Boolean(n) => Arc::new(BooleanArray::from(vec![*n])),
                 })
                 .collect::<Vec<ArrayRef>>();
 
@@ -800,6 +801,10 @@ pub(crate) fn create_group_by_values(
                     .downcast_ref::<TimestampNanosecondArray>()
                     .unwrap();
                 vec[i] = GroupByScalar::TimeNanosecond(array.value(row))
+            }
+            DataType::Boolean => {
+                let array = col.as_any().downcast_ref::<BooleanArray>().unwrap();
+                vec[i] = GroupByScalar::Boolean(array.value(row))
             }
             _ => {
                 // This is internal because we should have caught this before.
