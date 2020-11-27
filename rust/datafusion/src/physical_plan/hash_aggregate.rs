@@ -642,9 +642,7 @@ fn create_batch_from_map(
                     GroupByScalar::TimeNanosecond(n) => {
                         Arc::new(TimestampNanosecondArray::from_vec(vec![*n], None))
                     }
-                    GroupByScalar::Boolean(n) => {
-                        Arc::new(BooleanArray::from(vec![*n]))
-                    }
+                    GroupByScalar::Boolean(n) => Arc::new(BooleanArray::from(vec![*n])),
                 })
                 .collect::<Vec<ArrayRef>>();
 
