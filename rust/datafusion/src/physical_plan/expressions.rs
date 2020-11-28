@@ -2422,7 +2422,7 @@ impl ConstArray {
         let value = expr.evaluate(&batch)?;
         let scalar = match value {
             ColumnarValue::Scalar(value) => value,
-            ColumnarValue::Array(a) => ScalarValue::try_from_array(&a, 0)?
+            ColumnarValue::Array(a) => ScalarValue::try_from_array(&a, 0)?,
         };
         Ok(Arc::new(Literal::new(scalar)))
     }

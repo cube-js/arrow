@@ -30,7 +30,8 @@ use array::{
     Int8Array, LargeStringArray, StringArray, UInt16Array, UInt32Array, UInt64Array,
     UInt8Array,
 };
-use arrow::array::{TimestampNanosecondArray};
+use arrow::array::TimestampMicrosecondArray;
+use arrow::array::TimestampNanosecondArray;
 use arrow::datatypes::{DataType, SchemaRef, TimeUnit};
 use arrow::error::Result as ArrowResult;
 use arrow::record_batch::RecordBatch;
@@ -38,7 +39,6 @@ use arrow::{
     array::{self, ArrayRef},
     datatypes::Schema,
 };
-use arrow::array::TimestampMicrosecondArray;
 use futures::{Stream, TryStreamExt};
 
 /// Stream of record batches

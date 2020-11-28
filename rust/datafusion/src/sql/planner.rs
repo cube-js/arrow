@@ -38,12 +38,12 @@ use crate::{
 use arrow::datatypes::*;
 
 use super::parser::ExplainPlan;
-use itertools::Itertools;
 use crate::prelude::JoinType;
+use itertools::Itertools;
 use sqlparser::ast::{
     BinaryOperator, DataType as SQLDataType, Expr as SQLExpr, Join, JoinConstraint,
-    JoinOperator, Query, Select, SelectItem, SetExpr, SetOperator, TableFactor, TableWithJoins,
-    UnaryOperator, Value,
+    JoinOperator, Query, Select, SelectItem, SetExpr, SetOperator, TableFactor,
+    TableWithJoins, UnaryOperator, Value,
 };
 use sqlparser::ast::{ColumnDef as SQLColumnDef, ColumnOption};
 use sqlparser::ast::{OrderByExpr, Statement};
@@ -328,7 +328,11 @@ impl<'a, S: SchemaProvider> SqlToRel<'a, S> {
                 let join_schema = create_join_schema(left.schema(), &right.schema())?;
 
                 // parse ON expression
-                let expr = self.sql_to_rex(sql_expr, &join_schema, &left.aliased_schema())?;
+                let expr = self.sql_to_rex(
+                            sql_expr,
+                            &join_schema,
+                            &left.aliased_schema(),
+                        )?;
 
                 // extract join keys
                 extract_join_keys(&expr, &mut keys)?;
@@ -1462,7 +1466,7 @@ mod tests {
     fn select_group_by_needs_projection_with_case() {
         let sql = "SELECT SUM(CASE WHEN state = 'CA' THEN 1 ELSE 0 END) / NULLIF(COUNT(state), 0), state FROM person GROUP BY state";
         let expected = "\
-        Projection: #SUM(CASE WHEN #state Eq Utf8(\"CA\") THEN Int64(1) ELSE Int64(0) END) Divide if(#COUNT(state) NotEq Int64(0), #COUNT(state)), #state\
+        Projection: #SUM(CASE WHEN #state Eq Utf8(\"CA\") THEN Int64(1) ELSE Int64(0) END) Divide nullif(#COUNT(state), Int64(0)), #state\
         \n  Aggregate: groupBy=[[#state]], aggr=[[SUM(CASE WHEN #state Eq Utf8(\"CA\") THEN Int64(1) ELSE Int64(0) END), COUNT(#state)]]\
         \n    TableScan: person projection=None";
 
