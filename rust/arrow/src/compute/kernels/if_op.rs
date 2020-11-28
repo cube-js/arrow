@@ -49,12 +49,10 @@ where
             } else {
                 null_bit_builder.append_null()?;
             }
+        } else if else_values.is_valid(i) {
+            null_bit_builder.append_value(true)?;
         } else {
-            if else_values.is_valid(i) {
-                null_bit_builder.append_value(true)?;
-            } else {
-                null_bit_builder.append_null()?;
-            }
+            null_bit_builder.append_null()?;
         }
     }
 
@@ -102,12 +100,10 @@ pub fn if_string(
             } else {
                 builder.append_null()?;
             }
+        } else if else_values.is_valid(i) {
+            builder.append_value(else_values.value(i))?;
         } else {
-            if else_values.is_valid(i) {
-                builder.append_value(else_values.value(i))?;
-            } else {
-                builder.append_null()?;
-            }
+            builder.append_null()?;
         }
     }
 
