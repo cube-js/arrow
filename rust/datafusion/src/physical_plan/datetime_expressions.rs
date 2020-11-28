@@ -218,10 +218,10 @@ pub fn date_trunc(args: &[ArrayRef]) -> Result<TimestampNanosecondArray> {
     let result = range
         .map(|i| {
             if array.is_null(i) {
-                Ok(0 as i64)
+                Ok(0_i64)
             } else {
                 let date_time = match granularity_array.value(i) {
-                    "second" => array.value_as_datetime(i).map(|d| d),
+                    "second" => array.value_as_datetime(i),
                     "minute" => array.value_as_datetime(i).and_then(|d| d.with_second(0)),
                     "hour" => array
                         .value_as_datetime(i)

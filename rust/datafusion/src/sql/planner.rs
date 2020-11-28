@@ -128,7 +128,7 @@ impl<'a, S: SchemaProvider> SqlToRel<'a, S> {
                     let inputs = vec![left_plan, right_plan]
                         .into_iter()
                         .flat_map(|p| match p {
-                            LogicalPlan::Union { inputs, .. } => inputs.clone(),
+                            LogicalPlan::Union { inputs, .. } => inputs,
                             x => vec![Arc::new(x)],
                         })
                         .collect::<Vec<_>>();
@@ -150,11 +150,11 @@ impl<'a, S: SchemaProvider> SqlToRel<'a, S> {
                     })
                 }
                 _ => Err(DataFusionError::Plan(
-                    format!("Only UNION ALL is supported: {}", set_expr).to_owned(),
+                    format!("Only UNION ALL is supported: {}", set_expr),
                 )),
             },
             _ => Err(DataFusionError::NotImplemented(
-                format!("Query {} not implemented yet", set_expr).to_owned(),
+                format!("Query {} not implemented yet", set_expr),
             )),
         }
     }
