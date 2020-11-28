@@ -32,9 +32,10 @@ use super::display::{GraphvizVisitor, IndentVisitor};
 use super::expr::Expr;
 use super::extension::UserDefinedLogicalNode;
 use crate::logical_plan::dfschema::DFSchemaRef;
+use serde_derive::{Deserialize, Serialize};
 
 /// Join type
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum JoinType {
     /// Inner join
     Inner,
