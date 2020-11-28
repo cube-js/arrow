@@ -306,7 +306,7 @@ pub fn neq_bool(left: &BooleanArray, right: &BooleanArray) -> Result<BooleanArra
 }
 
 pub fn lt_bool(left: &BooleanArray, right: &BooleanArray) -> Result<BooleanArray> {
-    compare_op!(left, right, |a, b| a < b)
+    compare_op!(left, right, |a, b| !a & b)
 }
 
 pub fn lt_eq_bool(left: &BooleanArray, right: &BooleanArray) -> Result<BooleanArray> {
@@ -314,7 +314,7 @@ pub fn lt_eq_bool(left: &BooleanArray, right: &BooleanArray) -> Result<BooleanAr
 }
 
 pub fn gt_bool(left: &BooleanArray, right: &BooleanArray) -> Result<BooleanArray> {
-    compare_op!(left, right, |a, b| a > b)
+    compare_op!(left, right, |a, b| a & !b)
 }
 
 pub fn gt_eq_bool(left: &BooleanArray, right: &BooleanArray) -> Result<BooleanArray> {
