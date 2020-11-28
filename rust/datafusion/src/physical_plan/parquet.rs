@@ -128,7 +128,7 @@ impl ParquetExec {
             schema: Arc::new(projected_schema),
             projection,
             batch_size,
-            row_group_filter
+            row_group_filter,
         }
     }
 }
