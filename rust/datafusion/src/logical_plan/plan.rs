@@ -31,6 +31,7 @@ use crate::sql::parser::FileType;
 use super::display::{GraphvizVisitor, IndentVisitor};
 use super::expr::Expr;
 use super::extension::UserDefinedLogicalNode;
+use serde_derive::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Describes the source of the table, either registered on the context or by reference
@@ -43,7 +44,7 @@ pub enum TableSource {
 }
 
 /// Join type
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum JoinType {
     /// Inner join
     Inner,
@@ -280,12 +281,12 @@ impl LogicalPlan {
             LogicalPlan::CreateExternalTable { .. } => HashMap::new(),
             LogicalPlan::Explain { .. } => HashMap::new(),
             LogicalPlan::Extension { .. } => HashMap::new(), // TODO
-            LogicalPlan::Join { left, right, .. } => left.aliased_schema().into_iter().chain(right.aliased_schema()).collect(),
-            LogicalPlan::Union {
-                alias,
-                schema,
-                ..
-            } => alias
+            LogicalPlan::Join { left, right, .. } => left
+                .aliased_schema()
+                .into_iter()
+                .chain(right.aliased_schema())
+                .collect(),
+            LogicalPlan::Union { alias, schema, .. } => alias
                 .as_ref()
                 .iter()
                 .map(|a| (a.to_string(), schema.clone()))
@@ -370,11 +371,12 @@ impl LogicalPlan {
             LogicalPlan::Join { left, right, .. } => {
                 left.accept(visitor)? && right.accept(visitor)?
             }
-            LogicalPlan::Union { inputs, .. } => {
-                inputs.iter().map(|input| input.accept(visitor))
-                    .collect::<Result<Vec<bool>, V::Error>>()?
-                    .into_iter().all(|b| b)
-            }
+            LogicalPlan::Union { inputs, .. } => inputs
+                .iter()
+                .map(|input| input.accept(visitor))
+                .collect::<Result<Vec<bool>, V::Error>>()?
+                .into_iter()
+                .all(|b| b),
             LogicalPlan::Limit { input, .. } => input.accept(visitor)?,
             LogicalPlan::Extension { node } => {
                 for input in node.inputs() {
@@ -742,7 +744,7 @@ mod tests {
             "employee.csv",
             &employee_schema(),
             Some(vec![0, 3]),
-            None
+            None,
         )
         .unwrap()
         .filter(col("state").eq(lit("CO")))
