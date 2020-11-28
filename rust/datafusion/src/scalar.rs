@@ -20,9 +20,9 @@
 use std::{convert::TryFrom, fmt, sync::Arc};
 
 use arrow::array::{
-    Int16Builder, Int32Builder, Int64Builder, Int8Builder, ListBuilder, UInt16Builder,
-    UInt32Builder, UInt64Builder, UInt8Builder, TimestampMicrosecondArray, TimestampNanosecondArray,
-    StringBuilder
+    Int16Builder, Int32Builder, Int64Builder, Int8Builder, ListBuilder, StringBuilder,
+    TimestampMicrosecondArray, TimestampNanosecondArray, UInt16Builder, UInt32Builder,
+    UInt64Builder, UInt8Builder,
 };
 use arrow::{
     array::ArrayRef,
@@ -247,8 +247,12 @@ impl ScalarValue {
             DataType::Int32 => typed_cast!(array, index, Int32Array, Int32),
             DataType::Int16 => typed_cast!(array, index, Int16Array, Int16),
             DataType::Int8 => typed_cast!(array, index, Int8Array, Int8),
-            DataType::Timestamp(TimeUnit::Microsecond, None) => typed_cast!(array, index, TimestampMicrosecondArray, TimeMicrosecond),
-            DataType::Timestamp(TimeUnit::Nanosecond, None) => typed_cast!(array, index, TimestampNanosecondArray, TimeNanosecond),
+            DataType::Timestamp(TimeUnit::Microsecond, None) => {
+                typed_cast!(array, index, TimestampMicrosecondArray, TimeMicrosecond)
+            }
+            DataType::Timestamp(TimeUnit::Nanosecond, None) => {
+                typed_cast!(array, index, TimestampNanosecondArray, TimeNanosecond)
+            }
             DataType::Utf8 => typed_cast!(array, index, StringArray, Utf8),
             DataType::LargeUtf8 => typed_cast!(array, index, LargeStringArray, LargeUtf8),
             DataType::List(nested_type) => {
@@ -393,7 +397,7 @@ impl TryFrom<ScalarValue> for i64 {
         match value {
             ScalarValue::Int64(Some(inner_value))
             | ScalarValue::TimeMicrosecond(Some(inner_value)) => Ok(inner_value),
-            | ScalarValue::TimeNanosecond(Some(inner_value)) => Ok(inner_value),
+            ScalarValue::TimeNanosecond(Some(inner_value)) => Ok(inner_value),
             _ => Err(DataFusionError::Internal(format!(
                 "Cannot convert {:?} to {}",
                 value,

@@ -38,17 +38,17 @@ use crate::{
 use arrow::datatypes::*;
 
 use super::parser::ExplainPlan;
-use itertools::Itertools;
 use crate::prelude::JoinType;
+use itertools::Itertools;
 use sqlparser::ast::{
     BinaryOperator, DataType as SQLDataType, Expr as SQLExpr, Join, JoinConstraint,
-    JoinOperator, Query, Select, SelectItem, SetExpr, SetOperator, TableFactor, TableWithJoins,
-    UnaryOperator, Value,
+    JoinOperator, Query, Select, SelectItem, SetExpr, SetOperator, TableFactor,
+    TableWithJoins, UnaryOperator, Value,
 };
 use sqlparser::ast::{ColumnDef as SQLColumnDef, ColumnOption};
 use sqlparser::ast::{OrderByExpr, Statement};
-use std::collections::{HashMap, HashSet};
 use sqlparser::parser::ParserError::ParserError;
+use std::collections::{HashMap, HashSet};
 
 /// The SchemaProvider trait allows the query planner to obtain meta-data about tables and
 /// functions referenced in SQL statements
@@ -311,7 +311,11 @@ impl<'a, S: SchemaProvider> SqlToRel<'a, S> {
                             create_join_schema(left.schema(), &right.schema())?;
 
                         // parse ON expression
-                        let expr = self.sql_to_rex(sql_expr, &join_schema, &left.aliased_schema())?;
+                        let expr = self.sql_to_rex(
+                            sql_expr,
+                            &join_schema,
+                            &left.aliased_schema(),
+                        )?;
 
                         // extract join keys
                         extract_join_keys(&expr, &mut keys)?;
