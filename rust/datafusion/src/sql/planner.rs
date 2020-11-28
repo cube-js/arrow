@@ -149,13 +149,15 @@ impl<'a, S: SchemaProvider> SqlToRel<'a, S> {
                         alias: alias.clone(),
                     })
                 }
-                _ => Err(DataFusionError::Plan(
-                    format!("Only UNION ALL is supported: {}", set_expr),
-                )),
+                _ => Err(DataFusionError::Plan(format!(
+                    "Only UNION ALL is supported: {}",
+                    set_expr
+                ))),
             },
-            _ => Err(DataFusionError::NotImplemented(
-                format!("Query {} not implemented yet", set_expr),
-            )),
+            _ => Err(DataFusionError::NotImplemented(format!(
+                "Query {} not implemented yet",
+                set_expr
+            ))),
         }
     }
 
