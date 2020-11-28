@@ -72,7 +72,7 @@ where
         T::DATA_TYPE,
         condition.len(),
         None,
-        null_bit_array.data_ref().null_buffer().map(|b| b.clone()),
+        null_bit_array.data_ref().null_buffer().cloned(),
         0,
         vec![Buffer::from(values.to_byte_slice())],
         vec![],
