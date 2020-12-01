@@ -36,6 +36,8 @@ use crate::physical_plan::hash_aggregate::{AggregateMode, HashAggregateExec};
 use crate::physical_plan::hash_join::HashJoinExec;
 use crate::physical_plan::limit::{GlobalLimitExec, LocalLimitExec};
 use crate::physical_plan::merge::{MergeExec, UnionExec};
+use crate::physical_plan::merge_join::MergeJoinExec;
+use crate::physical_plan::merge_sort::MergeSortExec;
 use crate::physical_plan::projection::ProjectionExec;
 use crate::physical_plan::repartition::RepartitionExec;
 use crate::physical_plan::sort::SortExec;
@@ -331,13 +333,23 @@ impl DefaultPhysicalPlanner {
                     JoinType::Left => hash_utils::JoinType::Left,
                     JoinType::Right => hash_utils::JoinType::Right,
                 };
-
-                Ok(Arc::new(HashJoinExec::try_new(
-                    left,
-                    right,
-                    &keys,
-                    &physical_join_type,
-                )?))
+                if left.as_any().downcast_ref::<MergeSortExec>().is_some()
+                    && right.as_any().downcast_ref::<MergeSortExec>().is_some()
+                {
+                    Ok(Arc::new(MergeJoinExec::try_new(
+                        left,
+                        right,
+                        &keys,
+                        &physical_join_type,
+                    )?))
+                } else {
+                    Ok(Arc::new(HashJoinExec::try_new(
+                        left,
+                        right,
+                        &keys,
+                        &physical_join_type,
+                    )?))
+                }
             }
             LogicalPlan::EmptyRelation {
                 produce_one_row,
