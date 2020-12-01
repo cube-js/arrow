@@ -2105,6 +2105,20 @@ pub fn if_then_else(
             true_values,
             false_values
         ),
+        DataType::Timestamp(TimeUnit::Microsecond, None) => if_then_else!(
+            array::TimestampMicrosecondBuilder,
+            array::TimestampMicrosecondArray,
+            bools,
+            true_values,
+            false_values
+        ),
+        DataType::Timestamp(TimeUnit::Nanosecond, None) => if_then_else!(
+            array::TimestampNanosecondBuilder,
+            array::TimestampNanosecondArray,
+            bools,
+            true_values,
+            false_values
+        ),
         DataType::Utf8 => if_then_else!(
             array::StringBuilder,
             array::StringArray,
