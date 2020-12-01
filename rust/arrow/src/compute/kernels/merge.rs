@@ -228,9 +228,33 @@ fn comparators_for<'a>(
             DataType::UInt64 => {
                 Box::new(PrimitiveComparator::<UInt64Type>::new(to_compare))
             }
+            DataType::Time32(TimeUnit::Second) => {
+                Box::new(PrimitiveComparator::<Time32SecondType>::new(to_compare))
+            }
+            DataType::Time32(TimeUnit::Millisecond) => {
+                Box::new(PrimitiveComparator::<Time32MillisecondType>::new(to_compare))
+            }
+            DataType::Time64(TimeUnit::Microsecond) => {
+                Box::new(PrimitiveComparator::<Time64MicrosecondType>::new(to_compare))
+            }
+            DataType::Time64(TimeUnit::Nanosecond) => {
+                Box::new(PrimitiveComparator::<Time64NanosecondType>::new(to_compare))
+            }
+            DataType::Timestamp(TimeUnit::Second, _) => {
+                Box::new(PrimitiveComparator::<TimestampSecondType>::new(to_compare))
+            }
+            DataType::Timestamp(TimeUnit::Millisecond, _) => {
+                Box::new(PrimitiveComparator::<TimestampMillisecondType>::new(to_compare))
+            }
+            DataType::Timestamp(TimeUnit::Microsecond, _) => {
+                Box::new(PrimitiveComparator::<TimestampMicrosecondType>::new(to_compare))
+            }
+            DataType::Timestamp(TimeUnit::Nanosecond, _) => {
+                Box::new(PrimitiveComparator::<TimestampNanosecondType>::new(to_compare))
+            }
             DataType::Boolean => Box::new(BooleanComparator::new(to_compare)),
             DataType::Utf8 => Box::new(StringComparator::new(to_compare)),
-            t => unimplemented!("Merge join is not supported for data type {:?}", t),
+            t => unimplemented!("Merge operations are not supported for data type {:?}", t),
         };
         comparators.push(comparator);
     }
@@ -529,7 +553,7 @@ mod tests {
         let vec2 = vec![array_2];
         let vec3 = vec![array_3];
         let arrays = vec![vec1.as_slice(), vec2.as_slice(), vec3.as_slice()];
-        let res = test_merge(&arrays);
+        let res = test_merge(arrays);
 
         assert_eq!(
             res.as_any().downcast_ref::<UInt64Array>().unwrap(),
@@ -542,7 +566,7 @@ mod tests {
         let array_1: ArrayRef = Arc::new(UInt64Array::from(vec![1, 2, 2, 3, 5, 10, 20]));
         let vec1 = vec![array_1];
         let arrays = vec![vec1.as_slice()];
-        let res = test_merge(&arrays);
+        let res = test_merge(arrays);
 
         assert_eq!(
             res.as_any().downcast_ref::<UInt64Array>().unwrap(),
@@ -550,7 +574,7 @@ mod tests {
         )
     }
 
-    fn test_merge(arrays: &Vec<&[ArrayRef]>) -> ArrayRef {
+    fn test_merge(arrays: Vec<&[ArrayRef]>) -> ArrayRef {
         let result = merge_sort_indices(
             arrays.clone(),
             (0..arrays.len()).map(|_| 0).collect(),
@@ -566,7 +590,7 @@ mod tests {
             .unwrap()
             .into_iter();
         let first = Ok(array_values.next().unwrap());
-        let res = array_values
+        array_values
             .fold(first, |res, b| {
                 res.and_then(|a| -> Result<ArrayRef, ArrowError> {
                     Ok(Arc::new(if_primitive(
@@ -576,7 +600,6 @@ mod tests {
                     )?))
                 })
             })
-            .unwrap();
-        res
+            .unwrap()
     }
 }
