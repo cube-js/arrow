@@ -33,7 +33,8 @@ use arrow::compute::kernels::arithmetic::{add, divide, multiply, negate, subtrac
 use arrow::compute::kernels::boolean::{and, nullif, or};
 use arrow::compute::kernels::comparison::{eq, gt, gt_eq, lt, lt_eq, neq};
 use arrow::compute::kernels::comparison::{
-    eq_bool, gt_bool, gt_eq_bool, lt_bool, lt_eq_bool, neq_bool,
+    eq_bool, eq_bool_scalar, gt_bool, gt_bool_scalar, gt_eq_bool, gt_eq_bool_scalar,
+    lt_bool, lt_bool_scalar, lt_eq_bool, lt_eq_bool_scalar, neq_bool, neq_bool_scalar,
 };
 use arrow::compute::kernels::comparison::{
     eq_scalar, gt_eq_scalar, gt_scalar, lt_eq_scalar, lt_scalar, neq_scalar,
@@ -975,6 +976,27 @@ macro_rules! compute_utf8_op_scalar {
 }
 
 /// Invoke a compute kernel on a data array and a scalar value
+macro_rules! compute_boolean_op_scalar {
+    ($LEFT:expr, $RIGHT:expr, $OP:ident, $DT:ident) => {{
+        let ll = $LEFT
+            .as_any()
+            .downcast_ref::<$DT>()
+            .expect("compute_op failed to downcast array");
+        if let ScalarValue::Boolean(Some(boolean_value)) = $RIGHT {
+            Ok(Arc::new(paste::expr! {[<$OP _bool_scalar>]}(
+                &ll,
+                boolean_value,
+            )?))
+        } else {
+            Err(DataFusionError::Internal(format!(
+                "compute_boolean_op_scalar failed to cast literal value {}",
+                $RIGHT
+            )))
+        }
+    }};
+}
+
+/// Invoke a compute kernel on a data array and a scalar value
 macro_rules! compute_op_scalar {
     ($LEFT:expr, $RIGHT:expr, $OP:ident, $DT:ident) => {{
         use std::convert::TryInto;
@@ -1094,6 +1116,9 @@ macro_rules! binary_array_op_scalar {
             DataType::UInt64 => compute_op_scalar!($LEFT, $RIGHT, $OP, UInt64Array),
             DataType::Float32 => compute_op_scalar!($LEFT, $RIGHT, $OP, Float32Array),
             DataType::Float64 => compute_op_scalar!($LEFT, $RIGHT, $OP, Float64Array),
+            DataType::Boolean => {
+                compute_boolean_op_scalar!($LEFT, $RIGHT, $OP, BooleanArray)
+            }
             DataType::Utf8 => compute_utf8_op_scalar!($LEFT, $RIGHT, $OP, StringArray),
             DataType::Timestamp(TimeUnit::Nanosecond, None) => {
                 compute_op_scalar!($LEFT, $RIGHT, $OP, TimestampNanosecondArray)
@@ -2198,6 +2223,13 @@ pub fn if_then_else(
         DataType::Timestamp(TimeUnit::Nanosecond, None) => if_then_else!(
             array::TimestampNanosecondBuilder,
             array::TimestampNanosecondArray,
+            bools,
+            true_values,
+            false_values
+        ),
+        DataType::Boolean => if_then_else!(
+            array::BooleanBuilder,
+            array::BooleanArray,
             bools,
             true_values,
             false_values
