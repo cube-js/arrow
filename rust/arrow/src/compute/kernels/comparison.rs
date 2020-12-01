@@ -321,6 +321,30 @@ pub fn gt_eq_bool(left: &BooleanArray, right: &BooleanArray) -> Result<BooleanAr
     compare_op!(left, right, |a, b| a >= b)
 }
 
+pub fn eq_bool_scalar(left: &BooleanArray, right: bool) -> Result<BooleanArray> {
+    compare_op_scalar!(left, right, |a, b| a == b)
+}
+
+pub fn neq_bool_scalar(left: &BooleanArray, right: bool) -> Result<BooleanArray> {
+    compare_op_scalar!(left, right, |a, b| a != b)
+}
+
+pub fn lt_bool_scalar(left: &BooleanArray, right: bool) -> Result<BooleanArray> {
+    compare_op_scalar!(left, right, |a: bool, b: bool| !a & b)
+}
+
+pub fn lt_eq_bool_scalar(left: &BooleanArray, right: bool) -> Result<BooleanArray> {
+    compare_op_scalar!(left, right, |a, b| a <= b)
+}
+
+pub fn gt_bool_scalar(left: &BooleanArray, right: bool) -> Result<BooleanArray> {
+    compare_op_scalar!(left, right, |a: bool, b: bool| a & !b)
+}
+
+pub fn gt_eq_bool_scalar(left: &BooleanArray, right: bool) -> Result<BooleanArray> {
+    compare_op_scalar!(left, right, |a, b| a >= b)
+}
+
 pub fn eq_utf8(left: &StringArray, right: &StringArray) -> Result<BooleanArray> {
     compare_op!(left, right, |a, b| a == b)
 }
