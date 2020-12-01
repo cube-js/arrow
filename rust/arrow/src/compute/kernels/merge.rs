@@ -232,10 +232,14 @@ fn comparators_for<'a>(
                 Box::new(PrimitiveComparator::<Time32SecondType>::new(to_compare))
             }
             DataType::Time32(TimeUnit::Millisecond) => {
-                Box::new(PrimitiveComparator::<Time32MillisecondType>::new(to_compare))
+                Box::new(PrimitiveComparator::<Time32MillisecondType>::new(
+                    to_compare,
+                ))
             }
             DataType::Time64(TimeUnit::Microsecond) => {
-                Box::new(PrimitiveComparator::<Time64MicrosecondType>::new(to_compare))
+                Box::new(PrimitiveComparator::<Time64MicrosecondType>::new(
+                    to_compare,
+                ))
             }
             DataType::Time64(TimeUnit::Nanosecond) => {
                 Box::new(PrimitiveComparator::<Time64NanosecondType>::new(to_compare))
@@ -243,18 +247,20 @@ fn comparators_for<'a>(
             DataType::Timestamp(TimeUnit::Second, _) => {
                 Box::new(PrimitiveComparator::<TimestampSecondType>::new(to_compare))
             }
-            DataType::Timestamp(TimeUnit::Millisecond, _) => {
-                Box::new(PrimitiveComparator::<TimestampMillisecondType>::new(to_compare))
-            }
-            DataType::Timestamp(TimeUnit::Microsecond, _) => {
-                Box::new(PrimitiveComparator::<TimestampMicrosecondType>::new(to_compare))
-            }
-            DataType::Timestamp(TimeUnit::Nanosecond, _) => {
-                Box::new(PrimitiveComparator::<TimestampNanosecondType>::new(to_compare))
-            }
+            DataType::Timestamp(TimeUnit::Millisecond, _) => Box::new(
+                PrimitiveComparator::<TimestampMillisecondType>::new(to_compare),
+            ),
+            DataType::Timestamp(TimeUnit::Microsecond, _) => Box::new(
+                PrimitiveComparator::<TimestampMicrosecondType>::new(to_compare),
+            ),
+            DataType::Timestamp(TimeUnit::Nanosecond, _) => Box::new(
+                PrimitiveComparator::<TimestampNanosecondType>::new(to_compare),
+            ),
             DataType::Boolean => Box::new(BooleanComparator::new(to_compare)),
             DataType::Utf8 => Box::new(StringComparator::new(to_compare)),
-            t => unimplemented!("Merge operations are not supported for data type {:?}", t),
+            t => {
+                unimplemented!("Merge operations are not supported for data type {:?}", t)
+            }
         };
         comparators.push(comparator);
     }
