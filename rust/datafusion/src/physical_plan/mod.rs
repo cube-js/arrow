@@ -243,6 +243,8 @@ pub mod limit;
 pub mod math_expressions;
 pub mod memory;
 pub mod merge;
+pub mod merge_join;
+pub mod merge_sort;
 pub mod parquet;
 pub mod planner;
 pub mod projection;

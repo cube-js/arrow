@@ -1953,7 +1953,8 @@ macro_rules! if_then_else {
     }};
 }
 
-fn if_then_else(
+/// if then else implementation
+pub fn if_then_else(
     bools: &BooleanArray,
     true_values: ArrayRef,
     false_values: ArrayRef,
