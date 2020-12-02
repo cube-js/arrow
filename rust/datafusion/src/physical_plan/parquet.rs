@@ -37,6 +37,7 @@ use fmt::Debug;
 use parquet::arrow::{ArrowReader, ParquetFileArrowReader};
 
 use crate::datasource::datasource::Statistics;
+use crate::logical_plan::{DFSchemaRef, ToDFSchema};
 use async_trait::async_trait;
 use futures::stream::Stream;
 
@@ -46,7 +47,7 @@ pub struct ParquetExec {
     /// Parquet partitions to read
     partitions: Vec<ParquetPartition>,
     /// Schema after projection is applied
-    schema: SchemaRef,
+    schema: DFSchemaRef,
     /// Projection for which columns to load
     projection: Vec<usize>,
     /// Batch size
@@ -196,7 +197,7 @@ impl ParquetExec {
         };
         Self {
             partitions,
-            schema: Arc::new(projected_schema),
+            schema: projected_schema.to_dfschema_ref().unwrap(),
             projection,
             batch_size,
             statistics,
@@ -216,7 +217,7 @@ impl ExecutionPlan for ParquetExec {
         self
     }
 
-    fn schema(&self) -> SchemaRef {
+    fn schema(&self) -> DFSchemaRef {
         self.schema.clone()
     }
 
@@ -268,7 +269,7 @@ impl ExecutionPlan for ParquetExec {
         });
 
         Ok(Box::pin(ParquetStream {
-            schema: self.schema.clone(),
+            schema: self.schema.to_schema_ref(),
             response_rx,
         }))
     }

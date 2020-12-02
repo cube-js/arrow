@@ -115,7 +115,7 @@ impl FlightService for FlightServiceImpl {
                 let schema = plan.schema();
                 let schema_flight_data =
                     arrow_flight::utils::flight_data_from_arrow_schema(
-                        schema.as_ref(),
+                        schema.to_schema_ref().as_ref(),
                         &options,
                     );
 

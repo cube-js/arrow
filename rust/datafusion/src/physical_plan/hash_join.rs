@@ -47,6 +47,7 @@ use super::{
 use crate::error::{DataFusionError, Result};
 
 use super::{ExecutionPlan, Partitioning, RecordBatchStream, SendableRecordBatchStream};
+use crate::logical_plan::DFSchemaRef;
 use ahash::RandomState;
 
 // An index of (batch, row) uniquely identifying a row in a part.
@@ -77,7 +78,7 @@ pub struct HashJoinExec {
     /// How the join is performed
     join_type: JoinType,
     /// The schema once the join is applied
-    schema: SchemaRef,
+    schema: DFSchemaRef,
     /// Build-side
     build_side: Arc<Mutex<Option<JoinLeftData>>>,
 }
@@ -101,7 +102,7 @@ impl HashJoinExec {
             &right_schema,
             on,
             &join_type,
-        ));
+        )?);
 
         let on = on
             .iter()
@@ -125,7 +126,7 @@ impl ExecutionPlan for HashJoinExec {
         self
     }
 
-    fn schema(&self) -> SchemaRef {
+    fn schema(&self) -> DFSchemaRef {
         self.schema.clone()
     }
 
@@ -204,7 +205,7 @@ impl ExecutionPlan for HashJoinExec {
             .map(|on| on.1.clone())
             .collect::<HashSet<_>>();
         Ok(Box::pin(HashJoinStream {
-            schema: self.schema.clone(),
+            schema: self.schema.to_schema_ref(),
             on_right,
             join_type: self.join_type,
             left_data,

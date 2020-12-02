@@ -32,6 +32,7 @@ use arrow::record_batch::RecordBatch;
 use super::{RecordBatchStream, SendableRecordBatchStream};
 use async_trait::async_trait;
 
+use crate::logical_plan::DFSchemaRef;
 use crossbeam::channel::{unbounded, Receiver, Sender};
 use futures::stream::Stream;
 use futures::StreamExt;
@@ -61,7 +62,7 @@ impl ExecutionPlan for RepartitionExec {
     }
 
     /// Get the schema for this execution plan
-    fn schema(&self) -> SchemaRef {
+    fn schema(&self) -> DFSchemaRef {
         self.input.schema()
     }
 
@@ -153,7 +154,7 @@ impl ExecutionPlan for RepartitionExec {
         Ok(Box::pin(RepartitionStream {
             num_input_partitions,
             num_input_partitions_processed: 0,
-            schema: self.input.schema(),
+            schema: self.input.schema().to_schema_ref(),
             input: channels[partition].1.clone(),
         }))
     }

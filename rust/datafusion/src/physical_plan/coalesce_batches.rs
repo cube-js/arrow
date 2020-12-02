@@ -28,6 +28,7 @@ use crate::physical_plan::{
     ExecutionPlan, Partitioning, RecordBatchStream, SendableRecordBatchStream,
 };
 
+use crate::logical_plan::DFSchemaRef;
 use arrow::compute::kernels::concat::concat;
 use arrow::datatypes::SchemaRef;
 use arrow::error::Result as ArrowResult;
@@ -64,7 +65,7 @@ impl ExecutionPlan for CoalesceBatchesExec {
     }
 
     /// Get the schema for this execution plan
-    fn schema(&self) -> SchemaRef {
+    fn schema(&self) -> DFSchemaRef {
         // The coalesce batches operator does not make any changes to the schema of its input
         self.input.schema()
     }
@@ -97,7 +98,7 @@ impl ExecutionPlan for CoalesceBatchesExec {
     async fn execute(&self, partition: usize) -> Result<SendableRecordBatchStream> {
         Ok(Box::pin(CoalesceBatchesStream {
             input: self.input.execute(partition).await?,
-            schema: self.input.schema(),
+            schema: self.input.schema().to_schema_ref(),
             target_batch_size: self.target_batch_size,
             buffer: Vec::new(),
             buffered_rows: 0,

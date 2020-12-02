@@ -19,6 +19,7 @@ use crate::logical_plan::{and, LogicalPlan};
 use crate::logical_plan::{DFSchema, Expr};
 use crate::optimizer::optimizer::OptimizerRule;
 use crate::optimizer::utils;
+use crate::physical_plan::expressions::Column;
 use crate::{error::Result, logical_plan::Operator};
 use std::{
     collections::{HashMap, HashSet},
@@ -345,6 +346,7 @@ fn optimize(plan: &LogicalPlan, mut state: State) -> Result<LogicalPlan> {
             filters,
             projection,
             table_name,
+            alias,
         } => {
             let mut used_columns = HashSet::new();
             let mut new_filters = filters.clone();
@@ -375,6 +377,7 @@ fn optimize(plan: &LogicalPlan, mut state: State) -> Result<LogicalPlan> {
                     projected_schema: projected_schema.clone(),
                     table_name: table_name.clone(),
                     filters: new_filters,
+                    alias: alias.clone(),
                 },
             )
         }
@@ -417,8 +420,10 @@ fn rewrite(expr: &Expr, projection: &HashMap<String, Expr>) -> Result<Expr> {
         .map(|e| rewrite(e, &projection))
         .collect::<Result<Vec<_>>>()?;
 
-    if let Expr::Column(name) = expr {
-        if let Some(expr) = projection.get(name) {
+    if let Expr::Column(name, relation) = expr {
+        if let Some(expr) =
+            projection.get(&Column::new_with_alias(name, relation.clone()).full_name())
+        {
             return Ok(expr.clone());
         }
     }
@@ -973,6 +978,7 @@ mod tests {
             )?),
             projection: None,
             source: Arc::new(test_provider),
+            alias: None,
         };
 
         LogicalPlanBuilder::from(&table_scan)

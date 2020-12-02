@@ -101,6 +101,23 @@ impl DFSchema {
         )
     }
 
+    /// Replace all field qualifiers as when this relation is aliased
+    pub fn alias(&self, qualifier: Option<&str>) -> Result<Self> {
+        if let Some(qualifier) = qualifier {
+            Self::new(
+                self.fields()
+                    .iter()
+                    .map(|f| DFField {
+                        field: f.field.clone(),
+                        qualifier: Some(qualifier.to_owned()),
+                    })
+                    .collect(),
+            )
+        } else {
+            Ok(self.clone())
+        }
+    }
+
     /// Combine two schemas
     pub fn join(&self, schema: &DFSchema) -> Result<Self> {
         let mut fields = self.fields.clone();
@@ -127,6 +144,21 @@ impl DFSchema {
             }
         }
         Err(DataFusionError::Plan(format!("No field named '{}'", name)))
+    }
+
+    /// Name can be fully qualified or not. Used for projection push down optimization
+    pub fn lookup_required_field_index(&self, name: &str) -> Result<usize> {
+        let split = name.split('.').collect::<Vec<_>>();
+        let field = if split.len() == 1 {
+            self.field_with_unqualified_name(name)?
+        } else {
+            self.field_with_name(Some(&split[0]), &split[1])?
+        };
+        self.fields
+            .iter()
+            .enumerate()
+            .find_map(|(i, f)| if f == &field { Some(i) } else { None })
+            .ok_or_else(|| DataFusionError::Plan(format!("No field '{:?}'", field)))
     }
 
     /// Find the field with the given name
@@ -183,6 +215,11 @@ impl DFSchema {
                 relation_name, name
             ))),
         }
+    }
+
+    /// Project to Schema with fully qualified names
+    pub fn to_schema_ref(&self) -> SchemaRef {
+        Arc::new(self.clone().into())
     }
 }
 

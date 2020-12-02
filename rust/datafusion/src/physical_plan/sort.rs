@@ -39,6 +39,7 @@ use crate::error::{DataFusionError, Result};
 use crate::physical_plan::expressions::PhysicalSortExpr;
 use crate::physical_plan::{common, Distribution, ExecutionPlan, Partitioning};
 
+use crate::logical_plan::DFSchemaRef;
 use async_trait::async_trait;
 
 /// Sort execution plan
@@ -74,7 +75,7 @@ impl ExecutionPlan for SortExec {
         self
     }
 
-    fn schema(&self) -> SchemaRef {
+    fn schema(&self) -> DFSchemaRef {
         self.input.schema()
     }
 

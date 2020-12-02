@@ -49,8 +49,10 @@ use super::{
 use ahash::RandomState;
 use hashbrown::HashMap;
 
+use crate::logical_plan::{DFSchema, DFSchemaRef};
 use arrow::array::{BooleanArray, TimestampMicrosecondArray, TimestampNanosecondArray};
 use async_trait::async_trait;
+use std::convert::TryFrom;
 
 /// Hash aggregate modes
 #[derive(Debug, Copy, Clone)]
@@ -68,15 +70,15 @@ pub struct HashAggregateExec {
     group_expr: Vec<(Arc<dyn PhysicalExpr>, String)>,
     aggr_expr: Vec<Arc<dyn AggregateExpr>>,
     input: Arc<dyn ExecutionPlan>,
-    schema: SchemaRef,
+    schema: DFSchemaRef,
 }
 
 fn create_schema(
-    input_schema: &Schema,
+    input_schema: &DFSchema,
     group_expr: &Vec<(Arc<dyn PhysicalExpr>, String)>,
     aggr_expr: &Vec<Arc<dyn AggregateExpr>>,
     mode: AggregateMode,
-) -> Result<Schema> {
+) -> Result<DFSchema> {
     let mut fields = Vec::with_capacity(group_expr.len() + aggr_expr.len());
     for (expr, name) in group_expr {
         fields.push(Field::new(
@@ -101,7 +103,7 @@ fn create_schema(
         }
     }
 
-    Ok(Schema::new(fields))
+    DFSchema::try_from(Schema::new(fields))
 }
 
 impl HashAggregateExec {
@@ -133,7 +135,7 @@ impl ExecutionPlan for HashAggregateExec {
         self
     }
 
-    fn schema(&self) -> SchemaRef {
+    fn schema(&self) -> DFSchemaRef {
         self.schema.clone()
     }
 
@@ -160,14 +162,14 @@ impl ExecutionPlan for HashAggregateExec {
         if self.group_expr.is_empty() {
             Ok(Box::pin(HashAggregateStream::new(
                 self.mode,
-                self.schema.clone(),
+                self.schema.to_schema_ref(),
                 self.aggr_expr.clone(),
                 input,
             )))
         } else {
             Ok(Box::pin(GroupedHashAggregateStream::new(
                 self.mode,
-                self.schema.clone(),
+                self.schema.to_schema_ref(),
                 group_expr,
                 self.aggr_expr.clone(),
                 input,
@@ -826,6 +828,7 @@ mod tests {
     use crate::physical_plan::common;
     use crate::physical_plan::expressions::{col, Avg};
 
+    use crate::logical_plan::ToDFSchema;
     use crate::physical_plan::merge::MergeExec;
 
     /// some mock data to aggregates
@@ -934,8 +937,8 @@ mod tests {
         fn as_any(&self) -> &dyn Any {
             self
         }
-        fn schema(&self) -> SchemaRef {
-            some_data().0
+        fn schema(&self) -> DFSchemaRef {
+            some_data().0.to_dfschema_ref().unwrap()
         }
 
         fn children(&self) -> Vec<Arc<dyn ExecutionPlan>> {

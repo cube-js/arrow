@@ -34,6 +34,7 @@ use super::{
     ColumnarValue, PhysicalExpr,
 };
 use crate::error::{DataFusionError, Result};
+use crate::logical_plan::DFSchema;
 use crate::physical_plan::array_expressions;
 use crate::physical_plan::datetime_expressions;
 use crate::physical_plan::expressions::{nullif_func, SUPPORTED_NULLIF_TYPES};
@@ -43,7 +44,7 @@ use arrow::{
     array::ArrayRef,
     compute::kernels::length::length,
     datatypes::TimeUnit,
-    datatypes::{DataType, Field, Schema},
+    datatypes::{DataType, Field},
     record_batch::RecordBatch,
 };
 use fmt::{Debug, Formatter};
@@ -279,7 +280,7 @@ pub fn return_type(
 pub fn create_physical_expr(
     fun: &BuiltinScalarFunction,
     args: &Vec<Arc<dyn PhysicalExpr>>,
-    input_schema: &Schema,
+    input_schema: &DFSchema,
 ) -> Result<Arc<dyn PhysicalExpr>> {
     let fun_expr: ScalarFunctionImplementation = Arc::new(match fun {
         BuiltinScalarFunction::Sqrt => math_expressions::sqrt,
@@ -450,11 +451,11 @@ impl fmt::Display for ScalarFunctionExpr {
 }
 
 impl PhysicalExpr for ScalarFunctionExpr {
-    fn data_type(&self, _input_schema: &Schema) -> Result<DataType> {
+    fn data_type(&self, _input_schema: &DFSchema) -> Result<DataType> {
         Ok(self.return_type.clone())
     }
 
-    fn nullable(&self, _input_schema: &Schema) -> Result<bool> {
+    fn nullable(&self, _input_schema: &DFSchema) -> Result<bool> {
         Ok(true)
     }
 
@@ -479,7 +480,9 @@ impl PhysicalExpr for ScalarFunctionExpr {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::logical_plan::ToDFSchema;
     use crate::{error::Result, physical_plan::expressions::lit, scalar::ScalarValue};
+    use arrow::datatypes::Schema;
     use arrow::{
         array::{ArrayRef, FixedSizeListArray, Float64Array, Int32Array, StringArray},
         datatypes::Field,
@@ -493,11 +496,17 @@ mod tests {
 
         let arg = lit(value);
 
-        let expr =
-            create_physical_expr(&BuiltinScalarFunction::Exp, &vec![arg], &schema)?;
+        let expr = create_physical_expr(
+            &BuiltinScalarFunction::Exp,
+            &vec![arg],
+            &schema.clone().to_dfschema()?,
+        )?;
 
         // type is correct
-        assert_eq!(expr.data_type(&schema)?, DataType::Float64);
+        assert_eq!(
+            expr.data_type(&schema.clone().to_dfschema()?)?,
+            DataType::Float64
+        );
 
         // evaluate works
         let batch = RecordBatch::try_new(Arc::new(schema.clone()), columns)?;
@@ -534,11 +543,14 @@ mod tests {
         let expr = create_physical_expr(
             &BuiltinScalarFunction::Concat,
             &vec![lit(value.clone()), lit(value)],
-            &schema,
+            &schema.clone().to_dfschema()?,
         )?;
 
         // type is correct
-        assert_eq!(expr.data_type(&schema)?, DataType::Utf8);
+        assert_eq!(
+            expr.data_type(&schema.clone().to_dfschema()?)?,
+            DataType::Utf8
+        );
 
         // evaluate works
         let batch = RecordBatch::try_new(Arc::new(schema.clone()), columns)?;
@@ -583,12 +595,12 @@ mod tests {
         let expr = create_physical_expr(
             &BuiltinScalarFunction::Array,
             &vec![lit(value1), lit(value2)],
-            &schema,
+            &schema.clone().to_dfschema()?,
         )?;
 
         // type is correct
         assert_eq!(
-            expr.data_type(&schema)?,
+            expr.data_type(&schema.clone().to_dfschema()?)?,
             // type equals to a common coercion
             DataType::FixedSizeList(Box::new(Field::new("item", expected_type, true)), 2)
         );

@@ -139,6 +139,8 @@ pub enum LogicalPlan {
         projected_schema: DFSchemaRef,
         /// Optional expressions to be used as filters by the table provider
         filters: Vec<Expr>,
+        /// Alias
+        alias: Option<String>,
     },
     /// Produces no rows: An empty relation with an empty schema
     EmptyRelation {

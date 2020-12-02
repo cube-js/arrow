@@ -22,8 +22,6 @@ use crate::error::{DataFusionError, Result};
 use crate::logical_plan::{DFField, DFSchema, DFSchemaRef, LogicalPlan, ToDFSchema};
 use crate::optimizer::optimizer::OptimizerRule;
 use crate::optimizer::utils;
-use arrow::datatypes::Schema;
-use arrow::error::Result as ArrowResult;
 use std::{collections::HashSet, sync::Arc};
 use utils::optimize_explain;
 
@@ -56,7 +54,7 @@ impl ProjectionPushDown {
 }
 
 fn get_projected_schema(
-    schema: &Schema,
+    schema: &DFSchema,
     projection: &Option<Vec<usize>>,
     required_columns: &HashSet<String>,
     has_projection: bool,
@@ -74,8 +72,8 @@ fn get_projected_schema(
     // e.g. when the column derives from an aggregation
     let mut projection: Vec<usize> = required_columns
         .iter()
-        .map(|name| schema.index_of(name))
-        .filter_map(ArrowResult::ok)
+        .map(|name| schema.lookup_required_field_index(name))
+        .filter_map(Result::ok)
         .collect();
 
     if projection.is_empty() {
@@ -100,7 +98,7 @@ fn get_projected_schema(
     // create the projected schema
     let mut projected_fields: Vec<DFField> = Vec::with_capacity(projection.len());
     for i in &projection {
-        projected_fields.push(DFField::from(schema.fields()[*i].clone()));
+        projected_fields.push(schema.fields()[*i].clone());
     }
 
     Ok((projection, projected_fields.to_dfschema_ref()?))
@@ -244,10 +242,14 @@ fn optimize_plan(
             source,
             projection,
             filters,
+            alias,
             ..
         } => {
             let (projection, projected_schema) = get_projected_schema(
-                &source.schema(),
+                &source
+                    .schema()
+                    .to_dfschema()?
+                    .alias(alias.as_ref().map(|a| a.as_str()))?,
                 projection,
                 required_columns,
                 has_projection,
@@ -260,6 +262,7 @@ fn optimize_plan(
                 projection: Some(projection),
                 projected_schema,
                 filters: filters.clone(),
+                alias: alias.clone(),
             })
         }
         LogicalPlan::Explain {
@@ -279,8 +282,7 @@ fn optimize_plan(
         | LogicalPlan::EmptyRelation { .. }
         | LogicalPlan::Sort { .. }
         | LogicalPlan::CreateExternalTable { .. }
-        | LogicalPlan::Extension { .. }
-        | LogicalPlan::Union { .. } => {
+        | LogicalPlan::Extension { .. } => {
             let expr = utils::expressions(plan);
             // collect all required columns by this plan
             utils::exprlist_to_column_names(&expr, &mut new_required_columns)?;
@@ -291,6 +293,34 @@ fn optimize_plan(
                 .iter()
                 .map(|plan| {
                     optimize_plan(optimizer, plan, &new_required_columns, has_projection)
+                })
+                .collect::<Result<Vec<_>>>()?;
+
+            utils::from_plan(plan, &expr, &new_inputs)
+        }
+        LogicalPlan::Union { inputs, .. } => {
+            let expr = utils::expressions(plan);
+            let original_schema = inputs[0].schema();
+            let inputs = utils::inputs(plan);
+            let new_inputs = inputs
+                .iter()
+                .map(|plan| {
+                    optimize_plan(
+                        optimizer,
+                        plan,
+                        &new_required_columns
+                            .iter()
+                            .map(|col| -> Result<String> {
+                                Ok(original_schema
+                                    .field_with_unqualified_name(
+                                        col.split('.').last().unwrap(),
+                                    )?
+                                    .qualified_name())
+                            })
+                            .filter_map(Result::ok)
+                            .collect::<HashSet<_>>(),
+                        has_projection,
+                    )
                 })
                 .collect::<Result<Vec<_>>>()?;
 

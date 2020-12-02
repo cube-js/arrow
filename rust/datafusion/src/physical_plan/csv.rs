@@ -33,7 +33,9 @@ use arrow::record_batch::RecordBatch;
 use futures::Stream;
 
 use super::{RecordBatchStream, SendableRecordBatchStream};
+use crate::logical_plan::{DFSchema, DFSchemaRef};
 use async_trait::async_trait;
+use std::convert::TryFrom;
 
 /// CSV file read option
 #[derive(Copy, Clone)]
@@ -114,7 +116,7 @@ pub struct CsvExec {
     /// The individual files under path
     filenames: Vec<String>,
     /// Schema representing the CSV file
-    schema: SchemaRef,
+    schema: DFSchemaRef,
     /// Does the CSV file have a header?
     has_header: bool,
     /// An optional column delimiter. Defaults to `b','`
@@ -124,7 +126,7 @@ pub struct CsvExec {
     /// Optional projection for which columns to load
     projection: Option<Vec<usize>>,
     /// Schema after the projection has been applied
-    projected_schema: SchemaRef,
+    projected_schema: DFSchemaRef,
     /// Batch size
     batch_size: usize,
 }
@@ -145,14 +147,16 @@ impl CsvExec {
             return Err(DataFusionError::Execution("No files found".to_string()));
         }
 
-        let schema = match options.schema {
+        let schema = DFSchema::try_from(match options.schema {
             Some(s) => s.clone(),
             None => CsvExec::try_infer_schema(&filenames, &options)?,
-        };
+        })?;
 
         let projected_schema = match &projection {
             None => schema.clone(),
-            Some(p) => Schema::new(p.iter().map(|i| schema.field(*i).clone()).collect()),
+            Some(p) => {
+                DFSchema::new(p.iter().map(|i| schema.field(*i).clone()).collect())?
+            }
         };
 
         Ok(Self {
@@ -190,7 +194,7 @@ impl ExecutionPlan for CsvExec {
     }
 
     /// Get the schema for this execution plan
-    fn schema(&self) -> SchemaRef {
+    fn schema(&self) -> DFSchemaRef {
         self.projected_schema.clone()
     }
 
@@ -221,7 +225,7 @@ impl ExecutionPlan for CsvExec {
     async fn execute(&self, partition: usize) -> Result<SendableRecordBatchStream> {
         Ok(Box::pin(CsvStream::try_new(
             &self.filenames[partition],
-            self.schema.clone(),
+            self.schema.to_schema_ref(),
             self.has_header,
             self.delimiter,
             &self.projection,

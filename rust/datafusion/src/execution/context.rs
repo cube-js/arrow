@@ -241,6 +241,7 @@ impl ExecutionContext {
             projected_schema: schema.to_dfschema_ref()?,
             projection: None,
             filters: vec![],
+            alias: None,
         };
         Ok(Arc::new(DataFrameImpl::new(
             self.state.clone(),
@@ -298,6 +299,7 @@ impl ExecutionContext {
                     projected_schema: schema.to_dfschema_ref()?,
                     projection: None,
                     filters: vec![],
+                    alias: None,
                 };
                 Ok(Arc::new(DataFrameImpl::new(
                     self.state.clone(),
@@ -407,7 +409,7 @@ impl ExecutionContext {
                     let file = fs::File::create(path)?;
                     let mut writer = ArrowWriter::try_new(
                         file.try_clone().unwrap(),
-                        plan.schema(),
+                        plan.schema().to_schema_ref(),
                         writer_properties.clone(),
                     )?;
                     let stream = plan.execute(i).await?;
@@ -772,7 +774,10 @@ mod tests {
         let plan = ctx.optimize(&plan)?;
         let physical_plan = ctx.create_physical_plan(&Arc::new(plan))?;
         assert_eq!(
-            physical_plan.schema().field_with_name("c1")?.is_nullable(),
+            physical_plan
+                .schema()
+                .field_with_unqualified_name("c1")?
+                .is_nullable(),
             false
         );
         Ok(())

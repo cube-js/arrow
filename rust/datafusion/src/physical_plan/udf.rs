@@ -20,8 +20,6 @@
 use fmt::{Debug, Formatter};
 use std::fmt;
 
-use arrow::datatypes::Schema;
-
 use crate::error::Result;
 use crate::{logical_plan::Expr, physical_plan::PhysicalExpr};
 
@@ -31,6 +29,7 @@ use super::{
     },
     type_coercion::coerce,
 };
+use crate::logical_plan::DFSchema;
 use std::sync::Arc;
 
 /// Logical representation of a UDF.
@@ -93,7 +92,7 @@ impl ScalarUDF {
 pub fn create_physical_expr(
     fun: &ScalarUDF,
     args: &Vec<Arc<dyn PhysicalExpr>>,
-    input_schema: &Schema,
+    input_schema: &DFSchema,
 ) -> Result<Arc<dyn PhysicalExpr>> {
     // coerce
     let args = coerce(args, input_schema, &fun.signature)?;

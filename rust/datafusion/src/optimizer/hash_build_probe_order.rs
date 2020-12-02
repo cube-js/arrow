@@ -245,6 +245,7 @@ mod tests {
             source: Arc::new(TestTableProvider { num_rows: 1000 }),
             projected_schema: Arc::new(DFSchema::empty()),
             filters: vec![],
+            alias: None,
         };
 
         let lp_right = LogicalPlan::TableScan {
@@ -253,6 +254,7 @@ mod tests {
             source: Arc::new(TestTableProvider { num_rows: 100 }),
             projected_schema: Arc::new(DFSchema::empty()),
             filters: vec![],
+            alias: None,
         };
 
         assert!(should_swap_join_order(&lp_left, &lp_right));

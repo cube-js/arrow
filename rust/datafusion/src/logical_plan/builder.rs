@@ -66,7 +66,7 @@ impl LogicalPlanBuilder {
         projection: Option<Vec<usize>>,
     ) -> Result<Self> {
         let provider = Arc::new(MemTable::try_new(schema, partitions)?);
-        Self::scan("", provider, projection)
+        Self::scan("", provider, projection, None)
     }
 
     /// Scan a CSV data source
@@ -76,7 +76,7 @@ impl LogicalPlanBuilder {
         projection: Option<Vec<usize>>,
     ) -> Result<Self> {
         let provider = Arc::new(CsvFile::try_new(path, options)?);
-        Self::scan("", provider, projection)
+        Self::scan("", provider, projection, None)
     }
 
     /// Scan a Parquet data source
@@ -86,7 +86,7 @@ impl LogicalPlanBuilder {
         max_concurrency: usize,
     ) -> Result<Self> {
         let provider = Arc::new(ParquetTable::try_new(path, max_concurrency)?);
-        Self::scan("", provider, projection)
+        Self::scan("", provider, projection, None)
     }
 
     /// Scan an empty data source, mainly used in tests
@@ -97,7 +97,7 @@ impl LogicalPlanBuilder {
     ) -> Result<Self> {
         let table_schema = Arc::new(table_schema.clone());
         let provider = Arc::new(EmptyTable::new(table_schema));
-        Self::scan(name, provider, projection)
+        Self::scan(name, provider, projection, None)
     }
 
     /// Convert a table provider into a builder with a TableScan
@@ -105,6 +105,7 @@ impl LogicalPlanBuilder {
         name: &str,
         provider: Arc<dyn TableProvider + Send + Sync>,
         projection: Option<Vec<usize>>,
+        alias: Option<String>,
     ) -> Result<Self> {
         let schema = provider.schema();
 
@@ -117,9 +118,10 @@ impl LogicalPlanBuilder {
         let table_scan = LogicalPlan::TableScan {
             table_name: name.to_string(),
             source: provider,
-            projected_schema,
+            projected_schema: Arc::new(projected_schema.alias(alias.as_deref())?), // TODO .or_else(|| name.split(".").last()) -- too many tests to fix
             projection,
             filters: vec![],
+            alias,
         };
 
         Ok(Self::from(&table_scan))

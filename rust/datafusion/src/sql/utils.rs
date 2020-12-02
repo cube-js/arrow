@@ -24,7 +24,9 @@ pub(crate) fn expand_wildcard(expr: &Expr, schema: &DFSchema) -> Vec<Expr> {
         Expr::Wildcard => schema
             .fields()
             .iter()
-            .map(|f| Expr::Column(f.name().to_string()))
+            .map(|f| {
+                Expr::Column(f.name().to_string(), f.qualifier().map(|r| r.to_string()))
+            })
             .collect::<Vec<Expr>>(),
         _ => vec![expr.clone()],
     }
@@ -45,7 +47,9 @@ pub(crate) fn find_aggregate_exprs(exprs: &Vec<Expr>) -> Vec<Expr> {
 /// Collect all deeply nested `Expr::Column`'s. They are returned in order of
 /// appearance (depth first), with duplicates omitted.
 pub(crate) fn find_column_exprs(exprs: &Vec<Expr>) -> Vec<Expr> {
-    find_exprs_in_exprs(exprs, &|nested_expr| matches!(nested_expr, Expr::Column(_)))
+    find_exprs_in_exprs(exprs, &|nested_expr| {
+        matches!(nested_expr, Expr::Column(_, _))
+    })
 }
 
 /// Search the provided `Expr`'s, and all of their nested `Expr`, for any that
@@ -145,7 +149,7 @@ where
             } => find_exprs_in_expr(nested_expr.as_ref(), test_fn),
 
             // These expressions don't nest other expressions.
-            Expr::Column(_)
+            Expr::Column(_, _)
             | Expr::Literal(_)
             | Expr::ScalarVariable(_)
             | Expr::Wildcard => vec![],
@@ -164,8 +168,8 @@ where
 /// Convert any `Expr` to an `Expr::Column`.
 pub(crate) fn expr_as_column_expr(expr: &Expr, plan: &LogicalPlan) -> Result<Expr> {
     match expr {
-        Expr::Column(_) => Ok(expr.clone()),
-        _ => Ok(Expr::Column(expr.name(&plan.schema())?)),
+        Expr::Column(_, None) => Ok(expr.clone()),
+        _ => Ok(Expr::Column(expr.name(&plan.schema())?, None)),
     }
 }
 
@@ -204,7 +208,7 @@ pub(crate) fn can_columns_satisfy_exprs(
     exprs: &Vec<Expr>,
 ) -> Result<bool> {
     columns.iter().try_for_each(|c| match c {
-        Expr::Column(_) => Ok(()),
+        Expr::Column(_, _) => Ok(()),
         _ => Err(DataFusionError::Internal(
             "Expr::Column are required".to_string(),
         )),
@@ -355,7 +359,7 @@ where
                 nulls_first: *nulls_first,
             }),
 
-            Expr::Column(_) | Expr::Literal(_) | Expr::ScalarVariable(_) => {
+            Expr::Column(_, _) | Expr::Literal(_) | Expr::ScalarVariable(_) => {
                 Ok(expr.clone())
             }
             Expr::Wildcard => Ok(Expr::Wildcard),

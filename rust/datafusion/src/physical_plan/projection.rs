@@ -34,6 +34,7 @@ use arrow::record_batch::RecordBatch;
 use super::{RecordBatchStream, SendableRecordBatchStream};
 use async_trait::async_trait;
 
+use crate::logical_plan::{DFSchemaRef, ToDFSchema};
 use futures::stream::Stream;
 use futures::stream::StreamExt;
 
@@ -43,7 +44,7 @@ pub struct ProjectionExec {
     /// The projection expressions stored as tuples of (expression, output column name)
     expr: Vec<(Arc<dyn PhysicalExpr>, String)>,
     /// The schema once the projection has been applied to the input
-    schema: SchemaRef,
+    schema: DFSchemaRef,
     /// The input plan
     input: Arc<dyn ExecutionPlan>,
 }
@@ -71,7 +72,7 @@ impl ProjectionExec {
 
         Ok(Self {
             expr,
-            schema,
+            schema: schema.to_dfschema_ref()?,
             input: input.clone(),
         })
     }
@@ -85,7 +86,7 @@ impl ExecutionPlan for ProjectionExec {
     }
 
     /// Get the schema for this execution plan
-    fn schema(&self) -> SchemaRef {
+    fn schema(&self) -> DFSchemaRef {
         self.schema.clone()
     }
 
@@ -115,7 +116,7 @@ impl ExecutionPlan for ProjectionExec {
 
     async fn execute(&self, partition: usize) -> Result<SendableRecordBatchStream> {
         Ok(Box::pin(ProjectionStream {
-            schema: self.schema.clone(),
+            schema: self.schema.to_schema_ref(),
             expr: self.expr.iter().map(|x| x.0.clone()).collect(),
             input: self.input.execute(partition).await?,
         }))

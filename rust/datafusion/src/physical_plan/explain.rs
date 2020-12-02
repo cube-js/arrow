@@ -30,7 +30,9 @@ use arrow::{array::StringBuilder, datatypes::SchemaRef, record_batch::RecordBatc
 use crate::physical_plan::Partitioning;
 
 use super::SendableRecordBatchStream;
+use crate::logical_plan::{DFSchema, DFSchemaRef};
 use async_trait::async_trait;
+use std::convert::TryFrom;
 
 /// Explain execution plan operator. This operator contains the string
 /// values of the various plans it has when it is created, and passes
@@ -38,7 +40,7 @@ use async_trait::async_trait;
 #[derive(Debug, Clone)]
 pub struct ExplainExec {
     /// The schema that this exec plan node outputs
-    schema: SchemaRef,
+    schema: DFSchemaRef,
 
     /// The strings to be printed
     stringified_plans: Vec<StringifiedPlan>,
@@ -48,7 +50,7 @@ impl ExplainExec {
     /// Create a new ExplainExec
     pub fn new(schema: SchemaRef, stringified_plans: Vec<StringifiedPlan>) -> Self {
         ExplainExec {
-            schema,
+            schema: Arc::new(DFSchema::try_from(schema.as_ref().clone()).unwrap()),
             stringified_plans,
         }
     }
@@ -61,7 +63,7 @@ impl ExecutionPlan for ExplainExec {
         self
     }
 
-    fn schema(&self) -> SchemaRef {
+    fn schema(&self) -> DFSchemaRef {
         self.schema.clone()
     }
 
@@ -106,7 +108,7 @@ impl ExecutionPlan for ExplainExec {
         }
 
         let record_batch = RecordBatch::try_new(
-            self.schema.clone(),
+            self.schema.to_schema_ref(),
             vec![
                 Arc::new(type_builder.finish()),
                 Arc::new(plan_builder.finish()),
@@ -114,7 +116,7 @@ impl ExecutionPlan for ExplainExec {
         )?;
 
         Ok(Box::pin(SizedRecordBatchStream::new(
-            self.schema.clone(),
+            self.schema.to_schema_ref(),
             vec![Arc::new(record_batch)],
         )))
     }

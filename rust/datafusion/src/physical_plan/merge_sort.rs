@@ -37,6 +37,7 @@ use crate::error::{DataFusionError, Result};
 use crate::physical_plan::expressions::if_then_else;
 use crate::physical_plan::{ExecutionPlan, Partitioning};
 
+use crate::logical_plan::DFSchemaRef;
 use arrow::compute::kernels::merge::merge_sort_indices;
 use async_trait::async_trait;
 use futures::future::join_all;
@@ -61,7 +62,7 @@ impl ExecutionPlan for MergeSortExec {
         self
     }
 
-    fn schema(&self) -> SchemaRef {
+    fn schema(&self) -> DFSchemaRef {
         self.input.schema()
     }
 
@@ -101,7 +102,7 @@ impl ExecutionPlan for MergeSortExec {
         .collect::<Result<Vec<_>>>()?;
 
         Ok(Box::pin(MergeSortStream::new(
-            self.input.schema(),
+            self.input.schema().to_schema_ref(),
             inputs,
             self.columns.clone(),
         )))

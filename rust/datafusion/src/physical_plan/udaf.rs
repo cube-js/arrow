@@ -20,10 +20,7 @@
 use fmt::{Debug, Formatter};
 use std::fmt;
 
-use arrow::{
-    datatypes::Field,
-    datatypes::{DataType, Schema},
-};
+use arrow::{datatypes::DataType, datatypes::Field};
 
 use crate::physical_plan::PhysicalExpr;
 use crate::{error::Result, logical_plan::Expr};
@@ -36,6 +33,7 @@ use super::{
     type_coercion::coerce,
     Accumulator, AggregateExpr,
 };
+use crate::logical_plan::DFSchema;
 use std::sync::Arc;
 
 /// Logical representation of a user-defined aggregate function (UDAF)
@@ -103,7 +101,7 @@ impl AggregateUDF {
 pub fn create_aggregate_expr(
     fun: &AggregateUDF,
     args: &Vec<Arc<dyn PhysicalExpr>>,
-    input_schema: &Schema,
+    input_schema: &DFSchema,
     name: String,
 ) -> Result<Arc<dyn AggregateExpr>> {
     // coerce

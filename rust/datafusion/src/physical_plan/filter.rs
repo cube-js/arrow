@@ -34,6 +34,7 @@ use arrow::record_batch::RecordBatch;
 
 use async_trait::async_trait;
 
+use crate::logical_plan::DFSchemaRef;
 use futures::stream::{Stream, StreamExt};
 
 /// FilterExec evaluates a boolean predicate against all input batches to determine which rows to
@@ -73,7 +74,7 @@ impl ExecutionPlan for FilterExec {
     }
 
     /// Get the schema for this execution plan
-    fn schema(&self) -> SchemaRef {
+    fn schema(&self) -> DFSchemaRef {
         // The filter operator does not make any changes to the schema of its input
         self.input.schema()
     }
@@ -104,7 +105,7 @@ impl ExecutionPlan for FilterExec {
 
     async fn execute(&self, partition: usize) -> Result<SendableRecordBatchStream> {
         Ok(Box::pin(FilterExecStream {
-            schema: self.input.schema().clone(),
+            schema: self.input.schema().to_schema_ref(),
             predicate: self.predicate.clone(),
             input: self.input.execute(partition).await?,
         }))
@@ -174,6 +175,7 @@ impl RecordBatchStream for FilterExecStream {
 mod tests {
 
     use super::*;
+    use crate::logical_plan::ToDFSchema;
     use crate::physical_plan::csv::{CsvExec, CsvReadOptions};
     use crate::physical_plan::expressions::*;
     use crate::physical_plan::ExecutionPlan;
@@ -197,16 +199,16 @@ mod tests {
                 col("c2"),
                 Operator::Gt,
                 lit(ScalarValue::from(1u32)),
-                &schema,
+                &schema.clone().to_dfschema()?,
             )?,
             Operator::And,
             binary(
                 col("c2"),
                 Operator::Lt,
                 lit(ScalarValue::from(4u32)),
-                &schema,
+                &schema.clone().to_dfschema()?,
             )?,
-            &schema,
+            &schema.to_dfschema()?,
         )?;
 
         let filter: Arc<dyn ExecutionPlan> =

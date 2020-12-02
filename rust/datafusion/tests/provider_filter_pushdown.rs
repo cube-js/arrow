@@ -24,7 +24,7 @@ use datafusion::datasource::datasource::{
 };
 use datafusion::error::Result;
 use datafusion::execution::context::ExecutionContext;
-use datafusion::logical_plan::Expr;
+use datafusion::logical_plan::{DFSchemaRef, Expr, ToDFSchema};
 use datafusion::physical_plan::common::SizedRecordBatchStream;
 use datafusion::physical_plan::{ExecutionPlan, Partitioning, SendableRecordBatchStream};
 use datafusion::prelude::*;
@@ -49,7 +49,7 @@ fn create_batch(value: i32, num_rows: usize) -> Result<RecordBatch> {
 
 #[derive(Debug)]
 struct CustomPlan {
-    schema: SchemaRef,
+    schema: DFSchemaRef,
     batches: Vec<Arc<RecordBatch>>,
 }
 
@@ -59,7 +59,7 @@ impl ExecutionPlan for CustomPlan {
         self
     }
 
-    fn schema(&self) -> SchemaRef {
+    fn schema(&self) -> DFSchemaRef {
         self.schema.clone()
     }
 
@@ -80,7 +80,7 @@ impl ExecutionPlan for CustomPlan {
 
     async fn execute(&self, _: usize) -> Result<SendableRecordBatchStream> {
         Ok(Box::pin(SizedRecordBatchStream::new(
-            self.schema(),
+            self.schema().to_schema_ref(),
             self.batches.clone(),
         )))
     }
@@ -115,7 +115,7 @@ impl TableProvider for CustomProvider {
                 };
 
                 Ok(Arc::new(CustomPlan {
-                    schema: self.zero_batch.schema(),
+                    schema: self.zero_batch.schema().to_dfschema_ref().unwrap(),
                     batches: match int_value {
                         0 => vec![Arc::new(self.zero_batch.clone())],
                         1 => vec![Arc::new(self.one_batch.clone())],
@@ -124,7 +124,7 @@ impl TableProvider for CustomProvider {
                 }))
             }
             _ => Ok(Arc::new(CustomPlan {
-                schema: self.zero_batch.schema(),
+                schema: self.zero_batch.schema().to_dfschema_ref().unwrap(),
                 batches: vec![],
             })),
         }

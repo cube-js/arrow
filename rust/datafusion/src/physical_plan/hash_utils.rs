@@ -18,7 +18,7 @@
 //! Functionality used both on logical and physical plans
 
 use crate::error::{DataFusionError, Result};
-use arrow::datatypes::{Field, Schema};
+use crate::logical_plan::{DFField, DFSchema};
 use std::collections::HashSet;
 
 /// All valid types of joins.
@@ -37,10 +37,11 @@ pub type JoinOn = [(String, String)];
 
 /// Checks whether the schemas "left" and "right" and columns "on" represent a valid join.
 /// They are valid whenever their columns' intersection equals the set `on`
-pub fn check_join_is_valid(left: &Schema, right: &Schema, on: &JoinOn) -> Result<()> {
-    let left: HashSet<String> = left.fields().iter().map(|f| f.name().clone()).collect();
+pub fn check_join_is_valid(left: &DFSchema, right: &DFSchema, on: &JoinOn) -> Result<()> {
+    let left: HashSet<String> =
+        left.fields().iter().map(|f| f.qualified_name()).collect();
     let right: HashSet<String> =
-        right.fields().iter().map(|f| f.name().clone()).collect();
+        right.fields().iter().map(|f| f.qualified_name()).collect();
 
     check_join_set_is_valid(&left, &right, on)
 }
@@ -91,12 +92,12 @@ fn check_join_set_is_valid(
 /// Creates a schema for a join operation.
 /// The fields from the left side are first
 pub fn build_join_schema(
-    left: &Schema,
-    right: &Schema,
+    left: &DFSchema,
+    right: &DFSchema,
     on: &JoinOn,
     join_type: &JoinType,
-) -> Schema {
-    let fields: Vec<Field> = match join_type {
+) -> Result<DFSchema> {
+    let fields: Vec<DFField> = match join_type {
         JoinType::Inner | JoinType::Left => {
             // remove right-side join keys if they have the same names as the left-side
             let duplicate_keys = &on
@@ -134,7 +135,7 @@ pub fn build_join_schema(
             left_fields.chain(right_fields).cloned().collect()
         }
     };
-    Schema::new(fields)
+    DFSchema::new(fields)
 }
 
 #[cfg(test)]

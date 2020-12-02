@@ -30,7 +30,7 @@ use arrow::{
 
 use datafusion::error::Result;
 use datafusion::execution::context::ExecutionContext;
-use datafusion::logical_plan::{LogicalPlan, ToDFSchema};
+use datafusion::logical_plan::LogicalPlan;
 use datafusion::prelude::create_udf;
 use datafusion::{
     datasource::{csv::CsvReadOptions, MemTable},
@@ -1360,8 +1360,6 @@ async fn execute(ctx: &mut ExecutionContext, sql: &str) -> Vec<Vec<String>> {
             .map(|f| (f.name().to_string(), f.data_type().clone()))
             .collect::<Vec<_>>(),
         physical_schema
-            .to_dfschema()
-            .unwrap()
             .fields()
             .iter()
             .map(|f| (f.name().to_string(), f.data_type().clone()))

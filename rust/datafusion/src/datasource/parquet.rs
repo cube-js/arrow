@@ -45,7 +45,7 @@ impl ParquetTable {
         let schema = parquet_exec.schema();
         Ok(Self {
             path: path.to_string(),
-            schema,
+            schema: schema.to_schema_ref(),
             statistics: parquet_exec.statistics().to_owned(),
             max_concurrency,
         })

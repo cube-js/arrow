@@ -53,6 +53,7 @@ use super::utils::{
     can_columns_satisfy_exprs, expand_wildcard, expr_as_column_expr,
     find_aggregate_exprs, find_column_exprs, rebase_expr,
 };
+use crate::physical_plan::expressions::Column;
 
 /// The ContextProvider trait allows the query planner to obtain meta-data about tables and
 /// functions referenced in SQL statements
@@ -156,7 +157,11 @@ impl<'a, S: ContextProvider> SqlToRel<'a, S> {
                         ));
                     }
                     Ok(LogicalPlan::Union {
-                        schema: inputs[0].schema().clone(),
+                        schema: Arc::new(
+                            inputs[0]
+                                .schema()
+                                .alias(alias.as_ref().map(|a| a.as_str()))?,
+                        ),
                         inputs,
                         alias: alias.clone(),
                     })
@@ -372,12 +377,16 @@ impl<'a, S: ContextProvider> SqlToRel<'a, S> {
 
     fn create_relation(&self, relation: &TableFactor) -> Result<LogicalPlan> {
         match relation {
-            TableFactor::Table { name, .. } => {
+            TableFactor::Table { name, alias, .. } => {
                 let table_name = name.to_string();
                 match self.schema_provider.get_table_provider(&table_name) {
-                    Some(provider) => {
-                        LogicalPlanBuilder::scan(&table_name, provider, None)?.build()
-                    }
+                    Some(provider) => LogicalPlanBuilder::scan(
+                        &table_name,
+                        provider,
+                        None,
+                        alias.as_ref().map(|a| a.to_string()),
+                    )?
+                    .build(),
                     None => Err(DataFusionError::Plan(format!(
                         "no provider found for table {}",
                         name
@@ -645,7 +654,7 @@ impl<'a, S: ContextProvider> SqlToRel<'a, S> {
                                 Ok(n) => {
                                     let schema = plan.schema();
                                     if n >= 1 && n - 1 < schema.fields().len() {
-                                        Ok(Expr::Column(schema.field(n - 1).name().to_string()))
+                                        Ok(Expr::Column(schema.field(n - 1).name().to_string(), None))
                                     } else {
                                         Err(DataFusionError::Plan(format!("Select column reference should be within 1..{} but found {}", schema.fields().len(), n)))
                                     }
@@ -675,14 +684,19 @@ impl<'a, S: ContextProvider> SqlToRel<'a, S> {
         find_column_exprs(exprs)
             .iter()
             .try_for_each(|col| match col {
-                Expr::Column(name) => {
-                    schema.field_with_unqualified_name(&name).map_err(|_| {
-                        DataFusionError::Plan(format!(
-                            "Invalid identifier '{}' for schema {}",
-                            name,
-                            schema.to_string()
-                        ))
-                    })?;
+                Expr::Column(name, relation) => {
+                    schema
+                        .field_with_name(relation.as_ref().map(|r| r.as_str()), &name)
+                        .map_err(|_| {
+                            DataFusionError::Plan(format!(
+                                "Invalid identifier '{}' for schema {}",
+                                relation
+                                    .as_ref()
+                                    .map(|r| format!("{}.{}", r, name))
+                                    .unwrap_or_else(|| name.to_string()),
+                                schema.to_string()
+                            ))
+                        })?;
                     Ok(())
                 }
                 _ => Err(DataFusionError::Internal("Not a column".to_string())),
@@ -734,7 +748,7 @@ impl<'a, S: ContextProvider> SqlToRel<'a, S> {
                     let var_names = vec![id.value.clone()];
                     Ok(Expr::ScalarVariable(var_names))
                 } else {
-                    Ok(Expr::Column(id.value.to_string()))
+                    Ok(Expr::Column(id.value.to_string(), None))
                 }
             }
 
@@ -747,10 +761,10 @@ impl<'a, S: ContextProvider> SqlToRel<'a, S> {
                 if &var_names[0][0..1] == "@" {
                     Ok(Expr::ScalarVariable(var_names))
                 } else {
-                    Err(DataFusionError::NotImplemented(format!(
-                        "Unsupported compound identifier '{:?}'",
-                        var_names,
-                    )))
+                    Ok(Expr::Column(
+                        var_names[1].to_string(),
+                        Some(var_names[0].to_string()),
+                    ))
                 }
             }
 
@@ -989,7 +1003,7 @@ fn remove_join_expressions(
     match expr {
         Expr::BinaryExpr { left, op, right } => match op {
             Operator::Eq => match (left.as_ref(), right.as_ref()) {
-                (Expr::Column(l), Expr::Column(r)) => {
+                (Expr::Column(l, _), Expr::Column(r, _)) => {
                     if join_columns.contains(&(l, r)) || join_columns.contains(&(r, l)) {
                         Ok(None)
                     } else {
@@ -1025,8 +1039,11 @@ fn extract_join_keys(expr: &Expr, accum: &mut Vec<(String, String)>) -> Result<(
     match expr {
         Expr::BinaryExpr { left, op, right } => match op {
             Operator::Eq => match (left.as_ref(), right.as_ref()) {
-                (Expr::Column(l), Expr::Column(r)) => {
-                    accum.push((l.to_owned(), r.to_owned()));
+                (Expr::Column(l, la), Expr::Column(r, ra)) => {
+                    accum.push((
+                        Column::new_with_alias(l, la.clone()).full_name(),
+                        Column::new_with_alias(r, ra.clone()).full_name(),
+                    ));
                     Ok(())
                 }
                 other => Err(DataFusionError::SQL(ParserError(format!(
@@ -1058,7 +1075,7 @@ fn extract_possible_join_keys(
     match expr {
         Expr::BinaryExpr { left, op, right } => match op {
             Operator::Eq => match (left.as_ref(), right.as_ref()) {
-                (Expr::Column(l), Expr::Column(r)) => {
+                (Expr::Column(l, _), Expr::Column(r, _)) => {
                     accum.push((l.to_owned(), r.to_owned()));
                     Ok(())
                 }
@@ -1097,6 +1114,8 @@ pub fn convert_data_type(sql: &SQLDataType) -> Result<DataType> {
 mod tests {
     use super::*;
     use crate::datasource::empty::EmptyTable;
+    use crate::optimizer::optimizer::OptimizerRule;
+    use crate::optimizer::projection_push_down::ProjectionPushDown;
     use crate::{logical_plan::create_udf, sql::parser::DFParser};
     use functions::ScalarFunctionImplementation;
 
@@ -1870,12 +1889,12 @@ mod tests {
     #[test]
     fn equijoin_explicit_syntax_3_tables() {
         let sql = "SELECT id, order_id, l_description \
-            FROM person \
-            JOIN orders ON id = customer_id \
-            JOIN lineitem ON o_item_id = l_item_id";
+            FROM person p \
+            JOIN orders o ON p.id = o.customer_id \
+            JOIN lineitem l ON o.item_id = l.item_id";
         let expected = "Projection: #id, #order_id, #l_description\
-            \n  Join: o_item_id = l_item_id\
-            \n    Join: id = customer_id\
+            \n  Join: o.item_id = l.item_id\
+            \n    Join: p.id = o.customer_id\
             \n      TableScan: person projection=None\
             \n      TableScan: orders projection=None\
             \n    TableScan: lineitem projection=None";
@@ -1888,6 +1907,42 @@ mod tests {
         let expected = "Projection: CAST(Utf8(\"2020-12-10\") AS Date32(Day)) AS date\
             \n  TableScan: person projection=None";
         quick_test(sql, expected);
+    }
+
+    #[test]
+    fn join_explicit_syntax_3_tables_with_aliases_optimized() {
+        let sql = "SELECT p.id, o.order_id, l.l_description \
+            FROM person p \
+            JOIN orders o ON p.id = o.customer_id \
+            JOIN lineitem_with_duplicate l ON o.item_id = l.item_id WHERE l.price > 10";
+        let expected = "Projection: #p.id, #o.order_id, #l.l_description\
+            \n  Filter: #l.price Gt Int64(10)\
+            \n    Join: o.item_id = l.item_id\
+            \n      Join: p.id = o.customer_id\
+            \n        TableScan: person projection=Some([0])\
+            \n        TableScan: orders projection=Some([0, 1, 2])\
+            \n      TableScan: lineitem_with_duplicate projection=Some([0, 2, 3])";
+        let plan = optimize(&logical_plan(sql).unwrap()).unwrap();
+        assert_eq!(expected, format!("{:?}", plan));
+    }
+
+    #[test]
+    fn union_with_aliases_optimized() {
+        let sql = "SELECT u.item_id, sum(u.price) \
+            FROM (SELECT * FROM orders UNION ALL SELECT * FROM orders_1) u GROUP BY 1";
+        let expected = "Aggregate: groupBy=[[#u.item_id]], aggr=[[SUM(#u.price)]]\
+            \n  Union\
+            \n    Projection: #item_id, #price\
+            \n      TableScan: orders projection=Some([2, 5])\
+            \n    Projection: #item_id, #price\
+            \n      TableScan: orders_1 projection=Some([2, 5])";
+        let plan = optimize(&logical_plan(sql).unwrap()).unwrap();
+        assert_eq!(expected, format!("{:?}", plan));
+    }
+
+    fn optimize(plan: &LogicalPlan) -> Result<LogicalPlan> {
+        let mut rule = ProjectionPushDown::new();
+        rule.optimize(plan)
     }
 
     fn logical_plan(sql: &str) -> Result<LogicalPlan> {
@@ -1927,13 +1982,29 @@ mod tests {
                 "orders" => Some(Schema::new(vec![
                     Field::new("order_id", DataType::UInt32, false),
                     Field::new("customer_id", DataType::UInt32, false),
+                    Field::new("item_id", DataType::Utf8, false),
+                    Field::new("o_item_id", DataType::Utf8, false),
+                    Field::new("qty", DataType::Int32, false),
+                    Field::new("price", DataType::Float64, false),
+                ])),
+                "orders_1" => Some(Schema::new(vec![
+                    Field::new("order_id", DataType::UInt32, false),
+                    Field::new("customer_id", DataType::UInt32, false),
+                    Field::new("item_id", DataType::Utf8, false),
                     Field::new("o_item_id", DataType::Utf8, false),
                     Field::new("qty", DataType::Int32, false),
                     Field::new("price", DataType::Float64, false),
                 ])),
                 "lineitem" => Some(Schema::new(vec![
+                    Field::new("item_id", DataType::UInt32, false),
                     Field::new("l_item_id", DataType::UInt32, false),
                     Field::new("l_description", DataType::Utf8, false),
+                ])),
+                "lineitem_with_duplicate" => Some(Schema::new(vec![
+                    Field::new("item_id", DataType::UInt32, false),
+                    Field::new("l_item_id", DataType::UInt32, false),
+                    Field::new("l_description", DataType::Utf8, false),
+                    Field::new("price", DataType::UInt32, false),
                 ])),
                 "aggregate_test_100" => Some(Schema::new(vec![
                     Field::new("c1", DataType::Utf8, false),
