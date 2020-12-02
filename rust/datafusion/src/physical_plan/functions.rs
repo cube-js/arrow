@@ -36,8 +36,8 @@ use super::{
 use crate::error::{DataFusionError, Result};
 use crate::physical_plan::array_expressions;
 use crate::physical_plan::datetime_expressions;
-use crate::physical_plan::expressions::{nullif_func, SUPPORTED_NULLIF_TYPES};
 use crate::physical_plan::expressions::if_array;
+use crate::physical_plan::expressions::{nullif_func, SUPPORTED_NULLIF_TYPES};
 use crate::physical_plan::math_expressions;
 use crate::physical_plan::string_expressions;
 use crate::physical_plan::type_coercion::common_type;

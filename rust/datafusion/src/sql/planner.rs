@@ -47,8 +47,8 @@ use sqlparser::ast::{
 };
 use sqlparser::ast::{ColumnDef as SQLColumnDef, ColumnOption};
 use sqlparser::ast::{OrderByExpr, Statement};
-use std::collections::HashMap;
 use sqlparser::parser::ParserError::ParserError;
+use std::collections::HashMap;
 use std::collections::HashSet;
 
 /// The SchemaProvider trait allows the query planner to obtain meta-data about tables and
@@ -330,11 +330,8 @@ impl<'a, S: SchemaProvider> SqlToRel<'a, S> {
                 let join_schema = create_join_schema(left.schema(), &right.schema())?;
 
                 // parse ON expression
-                let expr = self.sql_to_rex(
-                            sql_expr,
-                            &join_schema,
-                            &left.aliased_schema(),
-                        )?;
+                let expr =
+                    self.sql_to_rex(sql_expr, &join_schema, &left.aliased_schema())?;
 
                 // extract join keys
                 extract_join_keys(&expr, &mut keys)?;
@@ -414,7 +411,14 @@ impl<'a, S: SchemaProvider> SqlToRel<'a, S> {
                 check_unique_columns(&fields)?;
                 let join_schema = Schema::new(fields);
 
-                let filter_expr = self.sql_to_rex(predicate_expr, &join_schema, &plans.iter().flat_map(|p| p.aliased_schema().into_iter()).collect())?;
+                let filter_expr = self.sql_to_rex(
+                    predicate_expr,
+                    &join_schema,
+                    &plans
+                        .iter()
+                        .flat_map(|p| p.aliased_schema().into_iter())
+                        .collect(),
+                )?;
 
                 // look for expressions of the form `<column> = <column>`
                 let mut possible_join_keys = vec![];
