@@ -28,7 +28,7 @@ use crate::logical_plan::{
 use crate::physical_plan::csv::{CsvExec, CsvReadOptions};
 use crate::physical_plan::explain::ExplainExec;
 use crate::physical_plan::expressions::{
-    CaseExpr, Column, ConstArray, Literal, PhysicalSortExpr,
+    AliasedSchemaExec, CaseExpr, Column, ConstArray, Literal, PhysicalSortExpr,
 };
 use crate::physical_plan::filter::FilterExec;
 use crate::physical_plan::hash_aggregate::{AggregateMode, HashAggregateExec};
@@ -143,22 +143,28 @@ impl DefaultPhysicalPlanner {
 
         match logical_plan {
             LogicalPlan::TableScan {
-                source, projection, ..
-            } => match source {
-                TableSource::FromContext(table_name) => {
-                    match ctx_state.datasources.get(table_name) {
-                        Some(provider) => provider.scan(projection, batch_size),
-                        _ => Err(DataFusionError::Plan(format!(
-                            "No table named {}. Existing tables: {:?}",
-                            table_name,
-                            ctx_state.datasources.keys().collect::<Vec<_>>(),
-                        ))),
+                source,
+                projection,
+                alias,
+                ..
+            } => Ok(AliasedSchemaExec::wrap(
+                alias.clone(),
+                match source {
+                    TableSource::FromContext(table_name) => {
+                        match ctx_state.datasources.get(table_name) {
+                            Some(provider) => provider.scan(projection, batch_size),
+                            _ => Err(DataFusionError::Plan(format!(
+                                "No table named {}. Existing tables: {:?}",
+                                table_name,
+                                ctx_state.datasources.keys().collect::<Vec<_>>(),
+                            ))),
+                        }
                     }
-                }
-                TableSource::FromProvider(ref provider) => {
-                    provider.scan(projection, batch_size)
-                }
-            },
+                    TableSource::FromProvider(ref provider) => {
+                        provider.scan(projection, batch_size)
+                    }
+                }?,
+            )),
             LogicalPlan::InMemoryScan {
                 data,
                 projection,
@@ -333,14 +339,15 @@ impl DefaultPhysicalPlanner {
                 *produce_one_row,
                 Arc::new(schema.as_ref().clone()),
             ))),
-            LogicalPlan::Union { inputs, .. } => {
+            LogicalPlan::Union { inputs, alias, .. } => {
                 let physical_plans = inputs
                     .iter()
                     .map(|input| self.create_physical_plan(input, ctx_state))
                     .collect::<Result<Vec<_>>>()?;
-                Ok(Arc::new(MergeExec::new(Arc::new(UnionExec::new(
-                    physical_plans,
-                )))))
+                Ok(AliasedSchemaExec::wrap(
+                    alias.clone(),
+                    Arc::new(MergeExec::new(Arc::new(UnionExec::new(physical_plans)))),
+                ))
             }
             LogicalPlan::Limit { input, n, .. } => {
                 let limit = *n;
@@ -434,10 +441,11 @@ impl DefaultPhysicalPlanner {
             Expr::Alias(expr, ..) => {
                 Ok(self.create_physical_expr(expr, input_schema, ctx_state)?)
             }
-            Expr::Column(name) => {
+            Expr::Column(name, alias) => {
+                // TODO
                 // check that name exists
-                input_schema.field_with_name(&name)?;
-                Ok(Arc::new(Column::new(name)))
+                // input_schema.field_with_name(&name)?; // TODO
+                Ok(Arc::new(Column::new_with_alias(name, alias.clone())))
             }
             Expr::Literal(value) => Ok(Arc::new(Literal::new(value.clone()))),
             Expr::ScalarVariable(variable_names) => {
@@ -739,7 +747,7 @@ mod tests {
         let plan = plan(&logical_plan)?;
 
         // verify that the plan correctly casts u8 to i64
-        let expected = "BinaryExpr { left: Column { name: \"c7\" }, op: Lt, right: CastExpr { expr: Literal { value: UInt8(5) }, cast_type: Int64 } }";
+        let expected = "BinaryExpr { left: Column { name: \"c7\", alias: None }, op: Lt, right: CastExpr { expr: Literal { value: UInt8(5) }, cast_type: Int64 } }";
         assert!(format!("{:?}", plan).contains(expected));
 
         Ok(())
@@ -773,7 +781,7 @@ mod tests {
         let plan = plan(&logical_plan)?;
 
         // c12 is f64, c7 is u8 -> cast c7 to f64
-        let expected = "predicate: BinaryExpr { left: CastExpr { expr: Column { name: \"c7\" }, cast_type: Float64 }, op: Lt, right: Column { name: \"c12\" } }";
+        let expected = "predicate: BinaryExpr { left: CastExpr { expr: Column { name: \"c7\", alias: None }, cast_type: Float64 }, op: Lt, right: Column { name: \"c12\", alias: None } }";
         assert!(format!("{:?}", plan).contains(expected));
         Ok(())
     }

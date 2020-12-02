@@ -22,6 +22,7 @@ use crate::error::{DataFusionError, Result};
 use crate::logical_plan::LogicalPlan;
 use crate::optimizer::optimizer::OptimizerRule;
 use crate::optimizer::utils;
+use crate::physical_plan::expressions::Column;
 use arrow::datatypes::{Field, Schema, SchemaRef};
 use arrow::error::Result as ArrowResult;
 use std::{collections::HashSet, sync::Arc};
@@ -344,8 +345,7 @@ fn optimize_plan(
         | LogicalPlan::EmptyRelation { .. }
         | LogicalPlan::Sort { .. }
         | LogicalPlan::CreateExternalTable { .. }
-        | LogicalPlan::Extension { .. }
-        | LogicalPlan::Union { .. } => {
+        | LogicalPlan::Extension { .. } => {
             let expr = utils::expressions(plan);
             // collect all required columns by this plan
             utils::exprlist_to_column_names(&expr, &mut new_required_columns)?;
@@ -356,6 +356,33 @@ fn optimize_plan(
                 .iter()
                 .map(|plan| {
                     optimize_plan(optimizer, plan, &new_required_columns, has_projection)
+                })
+                .collect::<Result<Vec<_>>>()?;
+
+            utils::from_plan(plan, &expr, &new_inputs)
+        }
+        LogicalPlan::Union { inputs, .. } => {
+            let expr = utils::expressions(plan);
+            let original_schema = inputs[0].schema();
+            let inputs = utils::inputs(plan);
+            let new_inputs = inputs
+                .iter()
+                .map(|plan| {
+                    optimize_plan(
+                        optimizer,
+                        plan,
+                        &new_required_columns
+                            .iter()
+                            .map(|col| -> Result<String> {
+                                Ok(Column::new(col.split('.').last().unwrap())
+                                    .lookup_field(original_schema)?
+                                    .name()
+                                    .to_string())
+                            })
+                            .filter_map(Result::ok)
+                            .collect::<HashSet<_>>(),
+                        has_projection,
+                    )
                 })
                 .collect::<Result<Vec<_>>>()?;
 

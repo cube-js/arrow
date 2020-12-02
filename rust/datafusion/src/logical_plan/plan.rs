@@ -301,6 +301,27 @@ impl LogicalPlan {
             Field::new("plan", DataType::Utf8, false),
         ]))
     }
+
+    /// Prefix all names with table alias in schema
+    pub fn alias_schema(schema: SchemaRef, alias: Option<String>) -> SchemaRef {
+        if let Some(alias) = alias {
+            Arc::new(Schema::new(
+                schema
+                    .fields()
+                    .iter()
+                    .map(|f| {
+                        Field::new(
+                            &format!("{}.{}", alias, f.name().split('.').last().unwrap()),
+                            f.data_type().clone(),
+                            f.is_nullable(),
+                        )
+                    })
+                    .collect(),
+            ))
+        } else {
+            schema
+        }
+    }
 }
 
 /// Trait that implements the [Visitor

@@ -38,6 +38,7 @@ use crate::{
 use arrow::datatypes::*;
 
 use super::parser::ExplainPlan;
+use crate::physical_plan::expressions::Column;
 use crate::prelude::JoinType;
 use itertools::Itertools;
 use sqlparser::ast::{
@@ -145,7 +146,10 @@ impl<'a, S: SchemaProvider> SqlToRel<'a, S> {
                         )));
                     }
                     Ok(LogicalPlan::Union {
-                        schema: inputs[0].schema().clone(),
+                        schema: LogicalPlan::alias_schema(
+                            inputs[0].schema().clone(),
+                            alias.clone(),
+                        ),
                         inputs,
                         alias: alias.clone(),
                     })
@@ -330,8 +334,15 @@ impl<'a, S: SchemaProvider> SqlToRel<'a, S> {
                 let join_schema = create_join_schema(left.schema(), &right.schema())?;
 
                 // parse ON expression
-                let expr =
-                    self.sql_to_rex(sql_expr, &join_schema, &left.aliased_schema())?;
+                let expr = self.sql_to_rex(
+                    sql_expr,
+                    &join_schema,
+                    &left
+                        .aliased_schema()
+                        .into_iter()
+                        .chain(right.aliased_schema())
+                        .collect(),
+                )?;
 
                 // extract join keys
                 extract_join_keys(&expr, &mut keys)?;
@@ -571,7 +582,7 @@ impl<'a, S: SchemaProvider> SqlToRel<'a, S> {
             .schema()
             .fields()
             .iter()
-            .map(|f| Expr::Column(f.name().clone()))
+            .map(|f| Expr::Column(f.name().clone(), None))
             .collect::<Vec<_>>();
         let expected_columns = projection_expr
             .iter()
@@ -645,7 +656,7 @@ impl<'a, S: SchemaProvider> SqlToRel<'a, S> {
                                 Ok(n) => {
                                     let schema = plan.schema();
                                     if n >= 1 && n - 1 < schema.fields().len() {
-                                        Ok(Expr::Column(schema.field(n - 1).name().to_string()))
+                                        Ok(Expr::Column(schema.field(n - 1).name().to_string(), None))
                                     } else {
                                         Err(DataFusionError::Execution(format!("Select column reference should be within 1..{} but found {}", schema.fields().len(), n)))
                                     }
@@ -708,8 +719,8 @@ impl<'a, S: SchemaProvider> SqlToRel<'a, S> {
                     let var_names = vec![id.value.clone()];
                     Ok(Expr::ScalarVariable(var_names))
                 } else {
-                    match schema.field_with_name(&id.value) {
-                        Ok(field) => Ok(Expr::Column(field.name().clone())),
+                    match Column::new(&id.value).lookup_field(schema) {
+                        Ok(field) => Ok(Expr::Column(field.name().clone(), None)),
                         Err(_) => Err(DataFusionError::Plan(format!(
                             "Invalid identifier '{}' for schema {}",
                             id,
@@ -728,10 +739,19 @@ impl<'a, S: SchemaProvider> SqlToRel<'a, S> {
                 if &var_names[0][0..1] == "@" {
                     Ok(Expr::ScalarVariable(var_names))
                 } else if aliased_schema.contains_key(&var_names[0]) {
-                    match schema.field_with_name(&var_names[1]) {
-                        Ok(field) => Ok(Expr::Column(field.name().clone())),
+                    match Column::new_with_alias(
+                        &var_names[1],
+                        Some(var_names[0].to_string()),
+                    )
+                    .lookup_field(schema)
+                    {
+                        Ok(_) => Ok(Expr::Column(
+                            var_names[1].clone(),
+                            Some(var_names[0].to_string()),
+                        )),
                         Err(_) => Err(DataFusionError::Execution(format!(
-                            "Invalid identifier '{}' for schema {}",
+                            "Invalid identifier '{}.{}' for schema {}",
+                            &var_names[0],
                             &var_names[1],
                             schema.to_string()
                         ))),
@@ -976,17 +996,18 @@ fn create_join_schema(left: &SchemaRef, right: &SchemaRef) -> Result<Schema> {
     Ok(Schema::new(fields))
 }
 
-fn check_unique_columns(fields: &[Field]) -> Result<()> {
+fn check_unique_columns(_fields: &[Field]) -> Result<()> {
     // Until https://issues.apache.org/jira/browse/ARROW-10732 is implemented, we need
     // to ensure that schemas have unique field names
-    let unique_field_names = fields.iter().map(|f| f.name()).collect::<HashSet<_>>();
-    if unique_field_names.len() == fields.len() {
-        Ok(())
-    } else {
-        Err(DataFusionError::Plan(
-            "JOIN would result in schema with duplicate column names".to_string(),
-        ))
-    }
+    // let unique_field_names = fields.iter().map(|f| f.name()).collect::<HashSet<_>>();
+    Ok(())
+    // if unique_field_names.len() == fields.len() {
+    //     Ok(())
+    // } else {
+    //     Err(DataFusionError::Plan(
+    //         "JOIN would result in schema with duplicate column names".to_string(),
+    //     ))
+    // }
 }
 
 /// Remove join expressions from a filter expression
@@ -997,7 +1018,7 @@ fn remove_join_expressions(
     match expr {
         Expr::BinaryExpr { left, op, right } => match op {
             Operator::Eq => match (left.as_ref(), right.as_ref()) {
-                (Expr::Column(l), Expr::Column(r)) => {
+                (Expr::Column(l, _), Expr::Column(r, _)) => {
                     if join_columns.contains(&(l, r)) || join_columns.contains(&(r, l)) {
                         Ok(None)
                     } else {
@@ -1033,8 +1054,11 @@ fn extract_join_keys(expr: &Expr, accum: &mut Vec<(String, String)>) -> Result<(
     match expr {
         Expr::BinaryExpr { left, op, right } => match op {
             Operator::Eq => match (left.as_ref(), right.as_ref()) {
-                (Expr::Column(l), Expr::Column(r)) => {
-                    accum.push((l.to_owned(), r.to_owned()));
+                (Expr::Column(l, la), Expr::Column(r, ra)) => {
+                    accum.push((
+                        Column::new_with_alias(l, la.clone()).full_name(),
+                        Column::new_with_alias(r, ra.clone()).full_name(),
+                    ));
                     Ok(())
                 }
                 other => Err(DataFusionError::SQL(ParserError(format!(
@@ -1066,7 +1090,7 @@ fn extract_possible_join_keys(
     match expr {
         Expr::BinaryExpr { left, op, right } => match op {
             Operator::Eq => match (left.as_ref(), right.as_ref()) {
-                (Expr::Column(l), Expr::Column(r)) => {
+                (Expr::Column(l, _), Expr::Column(r, _)) => {
                     accum.push((l.to_owned(), r.to_owned()));
                     Ok(())
                 }
@@ -1124,7 +1148,7 @@ fn replace_aggregate_expr_in_projection(
 ) -> Result<Expr> {
     let name = expr.name(input_schema)?;
     if aggregate_expr.contains(&name) {
-        return Ok(Expr::Column(name));
+        return Ok(Expr::Column(name, None));
     }
     match expr {
         Expr::Alias(expr, alias) => Ok(Expr::Alias(
@@ -1182,6 +1206,8 @@ pub fn convert_data_type(sql: &SQLDataType) -> Result<DataType> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::optimizer::optimizer::OptimizerRule;
+    use crate::optimizer::projection_push_down::ProjectionPushDown;
     use crate::{logical_plan::create_udf, sql::parser::DFParser};
     use functions::ScalarFunctionImplementation;
 
@@ -1562,6 +1588,57 @@ mod tests {
         quick_test(sql, expected);
     }
 
+    #[test]
+    fn join_explicit_syntax_3_tables_with_aliases() {
+        let sql = "SELECT id, order_id, l_description \
+            FROM person p \
+            JOIN orders o ON p.id = o.customer_id \
+            JOIN lineitem l ON o.item_id = l.item_id";
+        let expected = "Projection: #p.id, #o.order_id, #l.l_description\
+            \n  Join: o.item_id = l.item_id\
+            \n    Join: p.id = o.customer_id\
+            \n      TableScan: person projection=None\
+            \n      TableScan: orders projection=None\
+            \n    TableScan: lineitem projection=None";
+        quick_test(sql, expected);
+    }
+
+    #[test]
+    fn join_explicit_syntax_3_tables_with_aliases_optimized() {
+        let sql = "SELECT p.id, o.order_id, l.l_description \
+            FROM person p \
+            JOIN orders o ON p.id = o.customer_id \
+            JOIN lineitem_with_duplicate l ON o.item_id = l.item_id WHERE l.price > 10";
+        let expected = "Projection: #p.id, #o.order_id, #l.l_description\
+            \n  Filter: #l.price Gt Int64(10)\
+            \n    Join: o.item_id = l.item_id\
+            \n      Join: p.id = o.customer_id\
+            \n        TableScan: person projection=Some([0])\
+            \n        TableScan: orders projection=Some([0, 1, 2])\
+            \n      TableScan: lineitem_with_duplicate projection=Some([0, 2, 3])";
+        let plan = optimize(&logical_plan(sql).unwrap()).unwrap();
+        assert_eq!(expected, format!("{:?}", plan));
+    }
+
+    #[test]
+    fn union_with_aliases_optimized() {
+        let sql = "SELECT u.item_id, sum(u.price) \
+            FROM (SELECT * FROM orders UNION ALL SELECT * FROM orders_1) u GROUP BY 1";
+        let expected = "Aggregate: groupBy=[[#u.item_id]], aggr=[[SUM(#u.price)]]\
+            \n  Union\
+            \n    Projection: #item_id, #price\
+            \n      TableScan: orders projection=Some([2, 5])\
+            \n    Projection: #item_id, #price\
+            \n      TableScan: orders_1 projection=Some([2, 5])";
+        let plan = optimize(&logical_plan(sql).unwrap()).unwrap();
+        assert_eq!(expected, format!("{:?}", plan));
+    }
+
+    fn optimize(plan: &LogicalPlan) -> Result<LogicalPlan> {
+        let mut rule = ProjectionPushDown::new();
+        rule.optimize(plan)
+    }
+
     fn logical_plan(sql: &str) -> Result<LogicalPlan> {
         let planner = SqlToRel::new(&MockSchemaProvider {});
         let result = DFParser::parse_sql(&sql);
@@ -1596,13 +1673,29 @@ mod tests {
                 "orders" => Some(Arc::new(Schema::new(vec![
                     Field::new("order_id", DataType::UInt32, false),
                     Field::new("customer_id", DataType::UInt32, false),
+                    Field::new("item_id", DataType::Utf8, false),
+                    Field::new("o_item_id", DataType::Utf8, false),
+                    Field::new("qty", DataType::Int32, false),
+                    Field::new("price", DataType::Float64, false),
+                ]))),
+                "orders_1" => Some(Arc::new(Schema::new(vec![
+                    Field::new("order_id", DataType::UInt32, false),
+                    Field::new("customer_id", DataType::UInt32, false),
+                    Field::new("item_id", DataType::Utf8, false),
                     Field::new("o_item_id", DataType::Utf8, false),
                     Field::new("qty", DataType::Int32, false),
                     Field::new("price", DataType::Float64, false),
                 ]))),
                 "lineitem" => Some(Arc::new(Schema::new(vec![
+                    Field::new("item_id", DataType::UInt32, false),
                     Field::new("l_item_id", DataType::UInt32, false),
                     Field::new("l_description", DataType::Utf8, false),
+                ]))),
+                "lineitem_with_duplicate" => Some(Arc::new(Schema::new(vec![
+                    Field::new("item_id", DataType::UInt32, false),
+                    Field::new("l_item_id", DataType::UInt32, false),
+                    Field::new("l_description", DataType::Utf8, false),
+                    Field::new("price", DataType::UInt32, false),
                 ]))),
                 "aggregate_test_100" => Some(Arc::new(Schema::new(vec![
                     Field::new("c1", DataType::Utf8, false),

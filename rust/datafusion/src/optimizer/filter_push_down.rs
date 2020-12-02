@@ -21,6 +21,7 @@ use crate::logical_plan::Expr;
 use crate::logical_plan::{and, LogicalPlan};
 use crate::optimizer::optimizer::OptimizerRule;
 use crate::optimizer::utils;
+use crate::physical_plan::expressions::Column;
 use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
@@ -357,8 +358,10 @@ fn rewrite(expr: &Expr, projection: &HashMap<String, Expr>) -> Result<Expr> {
         .collect::<Result<Vec<_>>>()?;
 
     match expr {
-        Expr::Column(name) => {
-            if let Some(expr) = projection.get(name) {
+        Expr::Column(name, alias) => {
+            if let Some(expr) =
+                projection.get(&Column::new_with_alias(name, alias.clone()).full_name())
+            {
                 return Ok(expr.clone());
             }
         }

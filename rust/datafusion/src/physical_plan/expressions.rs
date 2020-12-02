@@ -23,8 +23,11 @@ use std::sync::Arc;
 
 use super::ColumnarValue;
 use crate::error::{DataFusionError, Result};
-use crate::logical_plan::Operator;
-use crate::physical_plan::{Accumulator, AggregateExpr, PhysicalExpr};
+use crate::logical_plan::{LogicalPlan, Operator};
+use crate::physical_plan::{
+    Accumulator, AggregateExpr, ExecutionPlan, Partitioning, PhysicalExpr,
+    RecordBatchStream, SendableRecordBatchStream,
+};
 use crate::scalar::ScalarValue;
 use arrow::array::{self, Array, BooleanBuilder, LargeStringArray, StringBuilder};
 use arrow::compute;
@@ -48,7 +51,8 @@ use arrow::compute::kernels::comparison::{
     neq_utf8_scalar,
 };
 use arrow::compute::kernels::sort::{SortColumn, SortOptions};
-use arrow::datatypes::{DataType, DateUnit, Schema, TimeUnit};
+use arrow::datatypes::{DataType, DateUnit, Schema, SchemaRef, TimeUnit};
+use arrow::error::Result as ArrowResult;
 use arrow::record_batch::RecordBatch;
 use arrow::{
     array::{
@@ -58,8 +62,13 @@ use arrow::{
     },
     datatypes::Field,
 };
+use async_trait::async_trait;
 use compute::can_cast_types;
+use futures::stream::Stream;
+use futures::StreamExt;
 use std::any::Any;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 
 /// returns the name of the state
 pub fn format_state_name(name: &str, state_name: &str) -> String {
@@ -70,6 +79,7 @@ pub fn format_state_name(name: &str, state_name: &str) -> String {
 #[derive(Debug)]
 pub struct Column {
     name: String,
+    alias: Option<String>,
 }
 
 impl Column {
@@ -77,7 +87,129 @@ impl Column {
     pub fn new(name: &str) -> Self {
         Self {
             name: name.to_owned(),
+            alias: None,
         }
+    }
+
+    /// Create a new column expression with alias
+    pub fn new_with_alias(name: &str, alias: Option<String>) -> Self {
+        Self {
+            name: name.to_owned(),
+            alias,
+        }
+    }
+
+    /// Try to search with prefix and then without
+    pub fn lookup_field<'a>(&self, schema: &'a Schema) -> Result<&'a Field> {
+        schema.field_with_name(&self.full_name()).or_else(|e| {
+            schema
+                .fields()
+                .iter()
+                .find(|f| f.name().ends_with(&format!(".{}", self.name)))
+                .ok_or(DataFusionError::ArrowError(e))
+        })
+    }
+
+    /// Return fully qualified name if alias provided and short name if it's None
+    pub fn full_name(&self) -> String {
+        format!(
+            "{}{}",
+            self.alias
+                .as_ref()
+                .map(|a| format!("{}.", a))
+                .unwrap_or("".to_string()),
+            self.name
+        )
+    }
+}
+
+/// Prefix schema with alias schema for every batch in stream
+#[derive(Debug)]
+pub struct AliasedSchemaExec {
+    alias: String,
+    input: Arc<dyn ExecutionPlan>,
+}
+
+impl AliasedSchemaExec {
+    /// Wrap with AliasedSchema
+    pub fn wrap(
+        alias: Option<String>,
+        input: Arc<dyn ExecutionPlan>,
+    ) -> Arc<dyn ExecutionPlan> {
+        if let Some(alias) = alias {
+            Arc::new(Self { alias, input })
+        } else {
+            input
+        }
+    }
+}
+
+#[async_trait]
+impl ExecutionPlan for AliasedSchemaExec {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn schema(&self) -> SchemaRef {
+        let schema = self.input.schema();
+        LogicalPlan::alias_schema(schema, Some(self.alias.to_string()))
+    }
+
+    fn output_partitioning(&self) -> Partitioning {
+        self.input.output_partitioning()
+    }
+
+    fn children(&self) -> Vec<Arc<dyn ExecutionPlan>> {
+        vec![self.input.clone()]
+    }
+
+    fn with_new_children(
+        &self,
+        children: Vec<Arc<dyn ExecutionPlan>>,
+    ) -> Result<Arc<dyn ExecutionPlan>> {
+        Ok(Arc::new(Self {
+            input: children[0].clone(),
+            alias: self.alias.clone(),
+        }))
+    }
+
+    async fn execute(&self, partition: usize) -> Result<SendableRecordBatchStream> {
+        Ok(Box::pin(AliasedSchemaStream {
+            input: self.input.execute(partition).await?,
+            schema: self.schema(),
+        }))
+    }
+}
+
+/// Alias Schema for every batch
+pub struct AliasedSchemaStream {
+    input: SendableRecordBatchStream,
+    schema: SchemaRef,
+}
+
+impl Stream for AliasedSchemaStream {
+    type Item = ArrowResult<RecordBatch>;
+
+    fn poll_next(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Self::Item>> {
+        self.input
+            .poll_next_unpin(cx)
+            .map(|option| -> Option<ArrowResult<RecordBatch>> {
+                option.map(|batch| {
+                    RecordBatch::try_new(
+                        self.schema.clone(),
+                        batch?.columns().iter().map(|c| c.clone()).collect(),
+                    )
+                })
+            })
+    }
+}
+
+impl RecordBatchStream for AliasedSchemaStream {
+    fn schema(&self) -> SchemaRef {
+        self.schema.clone()
     }
 }
 
@@ -90,21 +222,24 @@ impl fmt::Display for Column {
 impl PhysicalExpr for Column {
     /// Get the data type of this expression, given the schema of the input
     fn data_type(&self, input_schema: &Schema) -> Result<DataType> {
-        Ok(input_schema
-            .field_with_name(&self.name)?
-            .data_type()
-            .clone())
+        Ok(self.lookup_field(input_schema)?.data_type().clone())
     }
 
     /// Decide whehter this expression is nullable, given the schema of the input
     fn nullable(&self, input_schema: &Schema) -> Result<bool> {
-        Ok(input_schema.field_with_name(&self.name)?.is_nullable())
+        Ok(self.lookup_field(input_schema)?.is_nullable())
     }
 
     /// Evaluate the expression
     fn evaluate(&self, batch: &RecordBatch) -> Result<ColumnarValue> {
         Ok(ColumnarValue::Array(
-            batch.column(batch.schema().index_of(&self.name)?).clone(),
+            batch
+                .column(
+                    batch
+                        .schema()
+                        .index_of(&self.lookup_field(&batch.schema())?.name())?,
+                )
+                .clone(),
         ))
     }
 

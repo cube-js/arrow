@@ -116,7 +116,10 @@ impl LogicalPlanBuilder {
         projection: Option<Vec<usize>>,
         alias: Option<String>,
     ) -> Result<Self> {
-        let table_schema = SchemaRef::new(table_schema.clone());
+        let table_schema = LogicalPlan::alias_schema(
+            SchemaRef::new(table_schema.clone()),
+            alias.clone(),
+        );
         let projected_schema = projection.clone().map(|p| {
             Schema::new(p.iter().map(|i| table_schema.field(*i).clone()).collect())
         });

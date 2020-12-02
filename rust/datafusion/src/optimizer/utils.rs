@@ -24,6 +24,7 @@ use arrow::datatypes::{Schema, SchemaRef};
 use super::optimizer::OptimizerRule;
 use crate::error::{DataFusionError, Result};
 use crate::logical_plan::{Expr, LogicalPlan, PlanType, StringifiedPlan};
+use crate::physical_plan::expressions::Column;
 use crate::prelude::{col, lit};
 use crate::scalar::ScalarValue;
 
@@ -47,8 +48,8 @@ pub fn exprlist_to_column_names(
 pub fn expr_to_column_names(expr: &Expr, accum: &mut HashSet<String>) -> Result<()> {
     match expr {
         Expr::Alias(expr, _) => expr_to_column_names(expr, accum),
-        Expr::Column(name) => {
-            accum.insert(name.clone());
+        Expr::Column(name, alias) => {
+            accum.insert(Column::new_with_alias(name, alias.clone()).full_name());
             Ok(())
         }
         Expr::ScalarVariable(var_names) => {
@@ -231,7 +232,7 @@ pub fn from_plan(
                 .iter()
                 .map(|p| Arc::new(p.clone()))
                 .collect::<Vec<_>>(),
-            schema: inputs[0].schema().clone(),
+            schema: LogicalPlan::alias_schema(inputs[0].schema().clone(), alias.clone()),
             alias: alias.clone(),
         }),
         LogicalPlan::Extension { node } => Ok(LogicalPlan::Extension {
@@ -284,7 +285,7 @@ pub fn expr_sub_expressions(expr: &Expr) -> Result<Vec<Expr>> {
             Ok(expr_list)
         }
         Expr::Cast { expr, .. } => Ok(vec![expr.as_ref().to_owned()]),
-        Expr::Column(_) => Ok(vec![]),
+        Expr::Column(_, _) => Ok(vec![]),
         Expr::Alias(expr, ..) => Ok(vec![expr.as_ref().to_owned()]),
         Expr::Literal(_) => Ok(vec![]),
         Expr::ScalarVariable(_) => Ok(vec![]),
@@ -368,7 +369,7 @@ pub fn rewrite_expression(expr: &Expr, expressions: &Vec<Expr>) -> Result<Expr> 
             Ok(Expr::Alias(Box::new(expressions[0].clone()), alias.clone()))
         }
         Expr::Not(_) => Ok(Expr::Not(Box::new(expressions[0].clone()))),
-        Expr::Column(_) => Ok(expr.clone()),
+        Expr::Column(_, _) => Ok(expr.clone()),
         Expr::Literal(_) => Ok(expr.clone()),
         Expr::ScalarVariable(_) => Ok(expr.clone()),
         Expr::Sort {
