@@ -398,7 +398,8 @@ fn merge_join(
             last_right,
             match join_type {
                 JoinType::Inner => MergeJoinType::Inner,
-                _ => unimplemented!(),
+                JoinType::Left => MergeJoinType::Left,
+                JoinType::Right => MergeJoinType::Right,
             },
         )?;
     let columns = schema
@@ -445,11 +446,20 @@ mod tests {
         right: Arc<dyn ExecutionPlan>,
         on: &[(&str, &str)],
     ) -> Result<MergeJoinExec> {
+        join_with_type(left, right, on, &JoinType::Inner)
+    }
+
+    fn join_with_type(
+        left: Arc<dyn ExecutionPlan>,
+        right: Arc<dyn ExecutionPlan>,
+        on: &[(&str, &str)],
+        join_type: &JoinType,
+    ) -> Result<MergeJoinExec> {
         let on: Vec<_> = on
             .iter()
             .map(|(l, r)| (l.to_string(), r.to_string()))
             .collect();
-        MergeJoinExec::try_new(left, right, &on, &JoinType::Inner)
+        MergeJoinExec::try_new(left, right, &on, join_type)
     }
 
     fn assert_same_rows(result: &[String], expected: &[&str]) {
@@ -554,6 +564,36 @@ mod tests {
 
         let result = format_batch(&batches[1]);
         let expected = vec!["2,2,8,80", "2,2,9,80"];
+        assert_same_rows(&result, &expected);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn join_two_left() -> Result<()> {
+        let left = build_table(
+            ("a1", &vec![1, 2, 2, 3]),
+            ("b2", &vec![1, 2, 2, 3]),
+            ("c1", &vec![7, 8, 9, 2]),
+        );
+        let right = build_table(
+            ("a1", &vec![1, 2, 3, 4]),
+            ("b2", &vec![1, 2, 2, 4]),
+            ("c2", &vec![70, 80, 90, 90]),
+        );
+        let on = &[("a1", "a1"), ("b2", "b2")];
+
+        let join = join_with_type(left, right, on, &JoinType::Left)?;
+
+        let columns = columns(&join.schema());
+        assert_eq!(columns, vec!["a1", "b2", "c1", "c2"]);
+
+        let stream = join.execute(0).await?;
+        let batches = common::collect(stream).await?;
+        assert_eq!(batches.len(), 1);
+
+        let result = format_batch(&batches[0]);
+        let expected = vec!["1,1,7,70", "2,2,8,80", "2,2,9,80", "3,3,2,NULL"];
         assert_same_rows(&result, &expected);
 
         Ok(())

@@ -33,6 +33,8 @@ type CursorAndIndices = (usize, Arc<UInt32Array>);
 #[derive(Debug)]
 pub enum MergeJoinType {
     Inner,
+    Left,
+    Right,
 }
 
 /// Merge join two arrays
@@ -43,14 +45,14 @@ pub fn merge_join_indices<'a>(
     right_cursor: usize,
     last_left: bool,
     last_right: bool,
-    _join_type: MergeJoinType,
+    join_type: MergeJoinType,
 ) -> Result<(CursorAndIndices, CursorAndIndices)> {
     let arrays: Vec<&'a [ArrayRef]> = vec![left, right];
 
     let comparators = comparators_for(arrays)?;
 
-    let mut left_indices = Vec::<u32>::new();
-    let mut right_indices = Vec::<u32>::new();
+    let mut left_indices = Vec::<Option<u32>>::new();
+    let mut right_indices = Vec::<Option<u32>>::new();
 
     let left_size = left[0].len();
     let right_size = right[0].len();
@@ -87,17 +89,25 @@ pub fn merge_join_indices<'a>(
                 }
                 for li in left_merge_cursor.row_index..left_equal_end.row_index {
                     for ri in right_merge_cursor.row_index..right_equal_end.row_index {
-                        left_indices.push(li as u32);
-                        right_indices.push(ri as u32);
+                        left_indices.push(Some(li as u32));
+                        right_indices.push(Some(ri as u32));
                     }
                 }
                 left_merge_cursor = left_equal_end;
                 right_merge_cursor = right_equal_end;
             }
             Ordering::Less => {
+                if let MergeJoinType::Left = join_type {
+                    left_indices.push(Some(left_merge_cursor.row_index as u32));
+                    right_indices.push(None);
+                }
                 left_merge_cursor = left_merge_cursor.next();
             }
             Ordering::Greater => {
+                if let MergeJoinType::Right = join_type {
+                    left_indices.push(None);
+                    right_indices.push(Some(right_merge_cursor.row_index as u32));
+                }
                 right_merge_cursor = right_merge_cursor.next();
             }
         }
