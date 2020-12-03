@@ -314,8 +314,28 @@ impl DefaultPhysicalPlanner {
                     JoinType::Left => hash_utils::JoinType::Left,
                     JoinType::Right => hash_utils::JoinType::Right,
                 };
-                if left.as_any().downcast_ref::<MergeSortExec>().is_some()
-                    && right.as_any().downcast_ref::<MergeSortExec>().is_some()
+                let left_to_check = if let Some(aliased) =
+                    left.as_any().downcast_ref::<AliasedSchemaExec>()
+                {
+                    aliased.children()[0].clone()
+                } else {
+                    left.clone()
+                };
+                let right_to_check = if let Some(aliased) =
+                    right.as_any().downcast_ref::<AliasedSchemaExec>()
+                {
+                    aliased.children()[0].clone()
+                } else {
+                    right.clone()
+                };
+                if left_to_check
+                    .as_any()
+                    .downcast_ref::<MergeSortExec>()
+                    .is_some()
+                    && right_to_check
+                        .as_any()
+                        .downcast_ref::<MergeSortExec>()
+                        .is_some()
                 {
                     Ok(Arc::new(MergeJoinExec::try_new(
                         left,
