@@ -314,28 +314,8 @@ impl DefaultPhysicalPlanner {
                     JoinType::Left => hash_utils::JoinType::Left,
                     JoinType::Right => hash_utils::JoinType::Right,
                 };
-                let left_to_check = if let Some(aliased) =
-                    left.as_any().downcast_ref::<AliasedSchemaExec>()
-                {
-                    aliased.children()[0].clone()
-                } else {
-                    left.clone()
-                };
-                let right_to_check = if let Some(aliased) =
-                    right.as_any().downcast_ref::<AliasedSchemaExec>()
-                {
-                    aliased.children()[0].clone()
-                } else {
-                    right.clone()
-                };
-                if left_to_check
-                    .as_any()
-                    .downcast_ref::<MergeSortExec>()
-                    .is_some()
-                    && right_to_check
-                        .as_any()
-                        .downcast_ref::<MergeSortExec>()
-                        .is_some()
+                if self.merge_sort_node(left.clone()).is_some()
+                    && self.merge_sort_node(right.clone()).is_some()
                 {
                     Ok(Arc::new(MergeJoinExec::try_new(
                         left,
@@ -447,6 +427,24 @@ impl DefaultPhysicalPlanner {
                     Ok(plan)
                 }
             }
+        }
+    }
+
+    fn merge_sort_node(
+        &self,
+        node: Arc<dyn ExecutionPlan>,
+    ) -> Option<Arc<dyn ExecutionPlan>> {
+        if let Some(_) = node.as_any().downcast_ref::<MergeSortExec>() {
+            Some(node.clone())
+        } else if let Some(aliased) = node.as_any().downcast_ref::<AliasedSchemaExec>() {
+            self.merge_sort_node(aliased.children()[0].clone())
+        } else if let Some(aliased) = node.as_any().downcast_ref::<FilterExec>() {
+            self.merge_sort_node(aliased.children()[0].clone())
+        } else if let Some(aliased) = node.as_any().downcast_ref::<ProjectionExec>() {
+            // TODO
+            self.merge_sort_node(aliased.children()[0].clone())
+        } else {
+            None
         }
     }
 
