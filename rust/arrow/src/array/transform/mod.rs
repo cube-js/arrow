@@ -186,6 +186,7 @@ fn build_extend(array: &ArrayData) -> Extend {
         DataType::Int16 => primitive::build_extend::<i16>(array),
         DataType::Int32 => primitive::build_extend::<i32>(array),
         DataType::Int64 => primitive::build_extend::<i64>(array),
+        DataType::Int64Decimal(_) => primitive::build_extend::<i64>(array),
         DataType::Float32 => primitive::build_extend::<f32>(array),
         DataType::Float64 => primitive::build_extend::<f64>(array),
         DataType::Date32(_)
@@ -215,6 +216,7 @@ fn build_extend(array: &ArrayData) -> Extend {
             DataType::Int16 => primitive::build_extend::<i16>(array),
             DataType::Int32 => primitive::build_extend::<i32>(array),
             DataType::Int64 => primitive::build_extend::<i64>(array),
+            // TODO
             _ => unreachable!(),
         },
         DataType::Float16 => unreachable!(),
@@ -241,6 +243,7 @@ fn build_extend_nulls(data_type: &DataType) -> ExtendNulls {
         DataType::Int16 => primitive::extend_nulls::<i16>,
         DataType::Int32 => primitive::extend_nulls::<i32>,
         DataType::Int64 => primitive::extend_nulls::<i64>,
+        DataType::Int64Decimal(_) => primitive::extend_nulls::<i64>,
         DataType::Float32 => primitive::extend_nulls::<f32>,
         DataType::Float64 => primitive::extend_nulls::<f64>,
         DataType::Date32(_)
@@ -264,6 +267,7 @@ fn build_extend_nulls(data_type: &DataType) -> ExtendNulls {
             DataType::Int16 => primitive::extend_nulls::<i16>,
             DataType::Int32 => primitive::extend_nulls::<i32>,
             DataType::Int64 => primitive::extend_nulls::<i64>,
+            // TODO
             _ => unreachable!(),
         },
         //DataType::Struct(_) => structure::build_extend(array),
@@ -305,6 +309,9 @@ impl<'a> MutableArrayData<'a> {
             DataType::Int16 => vec![MutableBuffer::new(capacity * size_of::<i16>())],
             DataType::Int32 => vec![MutableBuffer::new(capacity * size_of::<i32>())],
             DataType::Int64 => vec![MutableBuffer::new(capacity * size_of::<i64>())],
+            DataType::Int64Decimal(_) => {
+                vec![MutableBuffer::new(capacity * size_of::<i64>())]
+            }
             DataType::Float32 => vec![MutableBuffer::new(capacity * size_of::<f32>())],
             DataType::Float64 => vec![MutableBuffer::new(capacity * size_of::<f64>())],
             DataType::Date32(_) | DataType::Time32(_) => {
@@ -353,6 +360,7 @@ impl<'a> MutableArrayData<'a> {
                 DataType::Int16 => vec![MutableBuffer::new(capacity * size_of::<i16>())],
                 DataType::Int32 => vec![MutableBuffer::new(capacity * size_of::<i32>())],
                 DataType::Int64 => vec![MutableBuffer::new(capacity * size_of::<i64>())],
+                // TODO
                 _ => unreachable!(),
             },
             DataType::Float16 => unreachable!(),
@@ -372,6 +380,7 @@ impl<'a> MutableArrayData<'a> {
             | DataType::Int16
             | DataType::Int32
             | DataType::Int64
+            | DataType::Int64Decimal(_)
             | DataType::Float32
             | DataType::Float64
             | DataType::Date32(_)

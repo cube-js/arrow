@@ -769,6 +769,7 @@ pub(crate) fn create_key(
                 let array = col.as_any().downcast_ref::<Int64Array>().unwrap();
                 vec[i] = GroupByScalar::Int64(array.value(row))
             }
+            // TODO
             DataType::Utf8 => {
                 let array = col.as_any().downcast_ref::<StringArray>().unwrap();
                 vec[i] = GroupByScalar::Utf8(String::from(array.value(row)))

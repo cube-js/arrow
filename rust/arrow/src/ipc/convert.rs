@@ -136,6 +136,7 @@ pub(crate) fn get_data_type(field: ipc::Field, may_be_dictionary: bool) -> DataT
                 (32, true) => DataType::Int32,
                 (32, false) => DataType::UInt32,
                 (64, true) => DataType::Int64,
+                // TODO
                 (64, false) => DataType::UInt64,
                 _ => panic!("Unexpected bitwidth and signed"),
             };
@@ -159,9 +160,14 @@ pub(crate) fn get_data_type(field: ipc::Field, may_be_dictionary: bool) -> DataT
                 (32, true) => DataType::Int32,
                 (32, false) => DataType::UInt32,
                 (64, true) => DataType::Int64,
+                // TODO
                 (64, false) => DataType::UInt64,
                 _ => panic!("Unexpected bitwidth and signed"),
             }
+        }
+        ipc::Type::Decimal => {
+            let decimal = field.type_as_decimal().unwrap();
+            DataType::Int64Decimal(decimal.scale() as usize)
         }
         ipc::Type::Binary => DataType::Binary,
         ipc::Type::LargeBinary => DataType::LargeBinary,
@@ -364,6 +370,18 @@ pub(crate) fn get_fb_field_type<'a>(
             };
             FBFieldType {
                 type_type: ipc::Type::Int,
+                type_: builder.finish().as_union_value(),
+                children: Some(children),
+            }
+        }
+        Int64Decimal(scale) => {
+            let children = fbb.create_vector(&empty_fields[..]);
+            let mut builder = ipc::DecimalBuilder::new(fbb);
+            builder.add_scale(*scale as i32);
+            builder.add_precision(18);
+            builder.add_bitWidth(64);
+            FBFieldType {
+                type_type: ipc::Type::Decimal,
                 type_: builder.finish().as_union_value(),
                 children: Some(children),
             }

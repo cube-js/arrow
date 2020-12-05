@@ -66,6 +66,27 @@ pub fn concat(array_list: &[ArrayRef]) -> Result<ArrayRef> {
         DataType::Int16 => concat_primitive::<Int16Type>(array_data_list),
         DataType::Int32 => concat_primitive::<Int32Type>(array_data_list),
         DataType::Int64 => concat_primitive::<Int64Type>(array_data_list),
+        DataType::Int64Decimal(0) => {
+            concat_primitive::<Int64Decimal0Type>(array_data_list)
+        }
+        DataType::Int64Decimal(1) => {
+            concat_primitive::<Int64Decimal1Type>(array_data_list)
+        }
+        DataType::Int64Decimal(2) => {
+            concat_primitive::<Int64Decimal2Type>(array_data_list)
+        }
+        DataType::Int64Decimal(3) => {
+            concat_primitive::<Int64Decimal3Type>(array_data_list)
+        }
+        DataType::Int64Decimal(4) => {
+            concat_primitive::<Int64Decimal4Type>(array_data_list)
+        }
+        DataType::Int64Decimal(5) => {
+            concat_primitive::<Int64Decimal5Type>(array_data_list)
+        }
+        DataType::Int64Decimal(10) => {
+            concat_primitive::<Int64Decimal10Type>(array_data_list)
+        }
         DataType::UInt8 => concat_primitive::<UInt8Type>(array_data_list),
         DataType::UInt16 => concat_primitive::<UInt16Type>(array_data_list),
         DataType::UInt32 => concat_primitive::<UInt32Type>(array_data_list),
@@ -161,6 +182,7 @@ fn concat_list(
         DataType::Int16 => concat_primitive_list::<Int16Type>(array_data_list),
         DataType::Int32 => concat_primitive_list::<Int32Type>(array_data_list),
         DataType::Int64 => concat_primitive_list::<Int64Type>(array_data_list),
+        // TODO
         DataType::UInt8 => concat_primitive_list::<UInt8Type>(array_data_list),
         DataType::UInt16 => concat_primitive_list::<UInt16Type>(array_data_list),
         DataType::UInt32 => concat_primitive_list::<UInt32Type>(array_data_list),

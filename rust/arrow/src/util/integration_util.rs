@@ -223,6 +223,7 @@ impl ArrowJsonBatch {
                         arr.equals_json(&json_array.iter().collect::<Vec<&Value>>()[..])
                     }
                     DataType::Int64
+                    // TODO
                     | DataType::Date64(_)
                     | DataType::Time64(_)
                     | DataType::Timestamp(_, _)
@@ -360,6 +361,7 @@ impl ArrowJsonBatch {
                             )
                         }
                         DataType::Int64 => {
+                            // TODO
                             let arr = arr
                                 .as_any()
                                 .downcast_ref::<Int64DictionaryArray>()

@@ -226,6 +226,27 @@ fn comparators_for<'a>(
             DataType::Int64 => {
                 Box::new(PrimitiveComparator::<Int64Type>::new(to_compare))
             }
+            DataType::Int64Decimal(0) => {
+                Box::new(PrimitiveComparator::<Int64Decimal0Type>::new(to_compare))
+            }
+            DataType::Int64Decimal(1) => {
+                Box::new(PrimitiveComparator::<Int64Decimal1Type>::new(to_compare))
+            }
+            DataType::Int64Decimal(2) => {
+                Box::new(PrimitiveComparator::<Int64Decimal2Type>::new(to_compare))
+            }
+            DataType::Int64Decimal(3) => {
+                Box::new(PrimitiveComparator::<Int64Decimal3Type>::new(to_compare))
+            }
+            DataType::Int64Decimal(4) => {
+                Box::new(PrimitiveComparator::<Int64Decimal4Type>::new(to_compare))
+            }
+            DataType::Int64Decimal(5) => {
+                Box::new(PrimitiveComparator::<Int64Decimal5Type>::new(to_compare))
+            }
+            DataType::Int64Decimal(10) => {
+                Box::new(PrimitiveComparator::<Int64Decimal10Type>::new(to_compare))
+            }
             DataType::UInt8 => {
                 Box::new(PrimitiveComparator::<UInt8Type>::new(to_compare))
             }

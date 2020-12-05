@@ -91,6 +91,27 @@ where
         DataType::Int16 => take_primitive::<Int16Type, _>(values, indices),
         DataType::Int32 => take_primitive::<Int32Type, _>(values, indices),
         DataType::Int64 => take_primitive::<Int64Type, _>(values, indices),
+        DataType::Int64Decimal(0) => {
+            take_primitive::<Int64Decimal0Type, _>(values, indices)
+        }
+        DataType::Int64Decimal(1) => {
+            take_primitive::<Int64Decimal1Type, _>(values, indices)
+        }
+        DataType::Int64Decimal(2) => {
+            take_primitive::<Int64Decimal2Type, _>(values, indices)
+        }
+        DataType::Int64Decimal(3) => {
+            take_primitive::<Int64Decimal3Type, _>(values, indices)
+        }
+        DataType::Int64Decimal(4) => {
+            take_primitive::<Int64Decimal4Type, _>(values, indices)
+        }
+        DataType::Int64Decimal(5) => {
+            take_primitive::<Int64Decimal5Type, _>(values, indices)
+        }
+        DataType::Int64Decimal(10) => {
+            take_primitive::<Int64Decimal10Type, _>(values, indices)
+        }
         DataType::UInt8 => take_primitive::<UInt8Type, _>(values, indices),
         DataType::UInt16 => take_primitive::<UInt16Type, _>(values, indices),
         DataType::UInt32 => take_primitive::<UInt32Type, _>(values, indices),
@@ -163,6 +184,7 @@ where
             DataType::Int16 => take_dict::<Int16Type, _>(values, indices),
             DataType::Int32 => take_dict::<Int32Type, _>(values, indices),
             DataType::Int64 => take_dict::<Int64Type, _>(values, indices),
+            // TODO
             DataType::UInt8 => take_dict::<UInt8Type, _>(values, indices),
             DataType::UInt16 => take_dict::<UInt16Type, _>(values, indices),
             DataType::UInt32 => take_dict::<UInt32Type, _>(values, indices),

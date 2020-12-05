@@ -180,6 +180,7 @@ impl LevelInfo {
             | DataType::Int16
             | DataType::Int32
             | DataType::Int64
+            | DataType::Int64Decimal(_)
             | DataType::UInt8
             | DataType::UInt16
             | DataType::UInt32

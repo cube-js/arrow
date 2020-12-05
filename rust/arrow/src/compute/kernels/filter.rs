@@ -360,6 +360,13 @@ impl FilterContext {
             DataType::Int16 => filter_primitive_array!(self, array, Int16Array),
             DataType::Int32 => filter_primitive_array!(self, array, Int32Array),
             DataType::Int64 => filter_primitive_array!(self, array, Int64Array),
+            DataType::Int64Decimal(0) => filter_primitive_array!(self, array, Int64Decimal0Array),
+            DataType::Int64Decimal(1) => filter_primitive_array!(self, array, Int64Decimal1Array),
+            DataType::Int64Decimal(2) => filter_primitive_array!(self, array, Int64Decimal2Array),
+            DataType::Int64Decimal(3) => filter_primitive_array!(self, array, Int64Decimal3Array),
+            DataType::Int64Decimal(4) => filter_primitive_array!(self, array, Int64Decimal4Array),
+            DataType::Int64Decimal(5) => filter_primitive_array!(self, array, Int64Decimal5Array),
+            DataType::Int64Decimal(10) => filter_primitive_array!(self, array, Int64Decimal10Array),
             DataType::Float32 => filter_primitive_array!(self, array, Float32Array),
             DataType::Float64 => filter_primitive_array!(self, array, Float64Array),
             DataType::Boolean => {
@@ -482,6 +489,7 @@ impl FilterContext {
                     DataType::Int16 => filter_dictionary_array!(self, array, Int16DictionaryArray),
                     DataType::Int32 => filter_dictionary_array!(self, array, Int32DictionaryArray),
                     DataType::Int64 => filter_dictionary_array!(self, array, Int64DictionaryArray),
+                    // TODO
                     other => Err(ArrowError::ComputeError(format!(
                         "filter not supported for string dictionary with key of type {:?}",
                         other
@@ -515,6 +523,7 @@ impl FilterContext {
                 DataType::Int64 => {
                     filter_primitive_item_list_array!(self, array, Int64Type, ListArray, ListBuilder)
                 }
+                // TODO
                 DataType::Float32 => {
                     filter_primitive_item_list_array!(self, array, Float32Type, ListArray, ListBuilder)
                 }
@@ -628,6 +637,7 @@ impl FilterContext {
                 DataType::Int64 => {
                     filter_primitive_item_list_array!(self, array, Int64Type, LargeListArray, LargeListBuilder)
                 }
+                // TODO
                 DataType::Float32 => {
                     filter_primitive_item_list_array!(self, array, Float32Type, LargeListArray, LargeListBuilder)
                 }

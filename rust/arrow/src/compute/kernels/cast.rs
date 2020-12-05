@@ -154,6 +154,28 @@ pub fn can_cast_types(from_type: &DataType, to_type: &DataType) -> bool {
         (Int64, Float32) => true,
         (Int64, Float64) => true,
 
+        (Int64Decimal(_), UInt8) => true,
+        (Int64Decimal(_), UInt16) => true,
+        (Int64Decimal(_), UInt32) => true,
+        (Int64Decimal(_), UInt64) => true,
+        (Int64Decimal(_), Int8) => true,
+        (Int64Decimal(_), Int16) => true,
+        (Int64Decimal(_), Int32) => true,
+        (Int64Decimal(_), Int64) => true,
+        (Int64Decimal(_), Float32) => true,
+        (Int64Decimal(_), Float64) => true,
+
+        (UInt8, Int64Decimal(_)) => true,
+        (UInt16, Int64Decimal(_)) => true,
+        (UInt32, Int64Decimal(_)) => true,
+        (UInt64, Int64Decimal(_)) => true,
+        (Int8, Int64Decimal(_)) => true,
+        (Int16, Int64Decimal(_)) => true,
+        (Int32, Int64Decimal(_)) => true,
+        (Int64, Int64Decimal(_)) => true,
+        (Float32, Int64Decimal(_)) => true,
+        (Float64, Int64Decimal(_)) => true,
+
         (Float32, UInt8) => true,
         (Float32, UInt16) => true,
         (Float32, UInt32) => true,
@@ -204,6 +226,272 @@ pub fn can_cast_types(from_type: &DataType, to_type: &DataType) -> bool {
         (Null, Int32) => true,
         (_, _) => false,
     }
+}
+
+macro_rules! int_decimal_append_value_to {
+    ($BUILDER: expr, $CASTED:expr, $I:expr, $SCALE_MUL: expr, f64) => {
+        $BUILDER.append_value(($CASTED.value($I) as f64 / $SCALE_MUL) as f64)?;
+    };
+    ($BUILDER: expr, $CASTED:expr, $I:expr, $SCALE_MUL: expr, f32) => {
+        $BUILDER.append_value(($CASTED.value($I) as f32 / $SCALE_MUL) as f32)?;
+    };
+    ($BUILDER: expr, $CASTED:expr, $I:expr, $SCALE_MUL: expr, $TO_TYPE: ty) => {
+        $BUILDER.append_value(($CASTED.value($I) / $SCALE_MUL) as $TO_TYPE)?;
+    };
+}
+
+macro_rules! int_decimal_cast_to_array {
+    ($ARRAY:expr, $DECIMAL_ARRAY: ident, $TO_ARRAY_BUILDER: ident, $TO_TYPE: tt, $SCALE_MUL: expr) => {{
+        let casted = $ARRAY.as_any().downcast_ref::<$DECIMAL_ARRAY>().unwrap();
+        let mut b = $TO_ARRAY_BUILDER::new($ARRAY.len());
+        for i in 0..$ARRAY.len() {
+            if $ARRAY.is_null(i) {
+                b.append_null()?;
+            } else {
+                int_decimal_append_value_to!(b, casted, i, $SCALE_MUL, $TO_TYPE);
+            }
+        }
+
+        Ok(Arc::new(b.finish()) as ArrayRef)
+    }};
+}
+
+macro_rules! int_decimal_cast_from_array {
+    ($ARRAY:expr, $DECIMAL_ARRAY_BUILDER: ident, $FROM_ARRAY_TYPE: ident, $FROM_TYPE: tt, $SCALE_MUL: expr) => {{
+        let casted = $ARRAY.as_any().downcast_ref::<$FROM_ARRAY_TYPE>().unwrap();
+        let mut b = $DECIMAL_ARRAY_BUILDER::new($ARRAY.len());
+        for i in 0..$ARRAY.len() {
+            if $ARRAY.is_null(i) {
+                b.append_null()?;
+            } else {
+                b.append_value((casted.value(i) * ($SCALE_MUL as $FROM_TYPE)) as i64)?;
+            }
+        }
+
+        Ok(Arc::new(b.finish()) as ArrayRef)
+    }};
+}
+
+macro_rules! int_decimal_cast_to {
+    ($ARRAY:expr, $TO_ARRAY_BUILDER: ident, f32, $SCALE: expr) => {{
+        match $SCALE {
+            0 => int_decimal_cast_to_array!(
+                $ARRAY,
+                Int64Decimal0Array,
+                $TO_ARRAY_BUILDER,
+                f32,
+                1.0f32
+            ),
+            1 => int_decimal_cast_to_array!(
+                $ARRAY,
+                Int64Decimal1Array,
+                $TO_ARRAY_BUILDER,
+                f32,
+                10.0f32
+            ),
+            2 => int_decimal_cast_to_array!(
+                $ARRAY,
+                Int64Decimal2Array,
+                $TO_ARRAY_BUILDER,
+                f32,
+                100.0f32
+            ),
+            3 => int_decimal_cast_to_array!(
+                $ARRAY,
+                Int64Decimal3Array,
+                $TO_ARRAY_BUILDER,
+                f32,
+                1000.0f32
+            ),
+            4 => int_decimal_cast_to_array!(
+                $ARRAY,
+                Int64Decimal4Array,
+                $TO_ARRAY_BUILDER,
+                f32,
+                10000.0f32
+            ),
+            5 => int_decimal_cast_to_array!(
+                $ARRAY,
+                Int64Decimal5Array,
+                $TO_ARRAY_BUILDER,
+                f32,
+                100000.0f32
+            ),
+            10 => int_decimal_cast_to_array!(
+                $ARRAY,
+                Int64Decimal10Array,
+                $TO_ARRAY_BUILDER,
+                f32,
+                10000000000.0f32
+            ),
+            x => panic!("Unsupported scale: {}", x),
+        }
+    }};
+    ($ARRAY:expr, $TO_ARRAY_BUILDER: ident, f64, $SCALE: expr) => {{
+        match $SCALE {
+            0 => int_decimal_cast_to_array!(
+                $ARRAY,
+                Int64Decimal0Array,
+                $TO_ARRAY_BUILDER,
+                f64,
+                1.0f64
+            ),
+            1 => int_decimal_cast_to_array!(
+                $ARRAY,
+                Int64Decimal1Array,
+                $TO_ARRAY_BUILDER,
+                f64,
+                10.0f64
+            ),
+            2 => int_decimal_cast_to_array!(
+                $ARRAY,
+                Int64Decimal2Array,
+                $TO_ARRAY_BUILDER,
+                f64,
+                100.0f64
+            ),
+            3 => int_decimal_cast_to_array!(
+                $ARRAY,
+                Int64Decimal3Array,
+                $TO_ARRAY_BUILDER,
+                f64,
+                1000.0f64
+            ),
+            4 => int_decimal_cast_to_array!(
+                $ARRAY,
+                Int64Decimal4Array,
+                $TO_ARRAY_BUILDER,
+                f64,
+                10000.0f64
+            ),
+            5 => int_decimal_cast_to_array!(
+                $ARRAY,
+                Int64Decimal5Array,
+                $TO_ARRAY_BUILDER,
+                f64,
+                100000.0f64
+            ),
+            10 => int_decimal_cast_to_array!(
+                $ARRAY,
+                Int64Decimal10Array,
+                $TO_ARRAY_BUILDER,
+                f64,
+                10000000000.0f64
+            ),
+            x => panic!("Unsupported scale: {}", x),
+        }
+    }};
+    ($ARRAY:expr, $TO_ARRAY_BUILDER: ident, $TO_TYPE: ty, $SCALE: expr) => {{
+        match $SCALE {
+            0 => int_decimal_cast_to_array!(
+                $ARRAY,
+                Int64Decimal0Array,
+                $TO_ARRAY_BUILDER,
+                $TO_TYPE,
+                1
+            ),
+            1 => int_decimal_cast_to_array!(
+                $ARRAY,
+                Int64Decimal1Array,
+                $TO_ARRAY_BUILDER,
+                $TO_TYPE,
+                10
+            ),
+            2 => int_decimal_cast_to_array!(
+                $ARRAY,
+                Int64Decimal2Array,
+                $TO_ARRAY_BUILDER,
+                $TO_TYPE,
+                100
+            ),
+            3 => int_decimal_cast_to_array!(
+                $ARRAY,
+                Int64Decimal3Array,
+                $TO_ARRAY_BUILDER,
+                $TO_TYPE,
+                1000
+            ),
+            4 => int_decimal_cast_to_array!(
+                $ARRAY,
+                Int64Decimal4Array,
+                $TO_ARRAY_BUILDER,
+                $TO_TYPE,
+                10000
+            ),
+            5 => int_decimal_cast_to_array!(
+                $ARRAY,
+                Int64Decimal5Array,
+                $TO_ARRAY_BUILDER,
+                $TO_TYPE,
+                100000
+            ),
+            10 => int_decimal_cast_to_array!(
+                $ARRAY,
+                Int64Decimal10Array,
+                $TO_ARRAY_BUILDER,
+                $TO_TYPE,
+                10000000000
+            ),
+            x => panic!("Unsupported scale: {}", x),
+        }
+    }};
+}
+
+macro_rules! int_decimal_cast_from {
+    ($ARRAY:expr, $ARRAY_TYPE: ident, $TO_TYPE: ty, $SCALE: expr) => {{
+        match $SCALE {
+            0 => int_decimal_cast_from_array!(
+                $ARRAY,
+                Int64Decimal0Builder,
+                $ARRAY_TYPE,
+                $TO_TYPE,
+                1i64
+            ),
+            1 => int_decimal_cast_from_array!(
+                $ARRAY,
+                Int64Decimal1Builder,
+                $ARRAY_TYPE,
+                $TO_TYPE,
+                10i64
+            ),
+            2 => int_decimal_cast_from_array!(
+                $ARRAY,
+                Int64Decimal2Builder,
+                $ARRAY_TYPE,
+                $TO_TYPE,
+                100i64
+            ),
+            3 => int_decimal_cast_from_array!(
+                $ARRAY,
+                Int64Decimal3Builder,
+                $ARRAY_TYPE,
+                $TO_TYPE,
+                1000i64
+            ),
+            4 => int_decimal_cast_from_array!(
+                $ARRAY,
+                Int64Decimal4Builder,
+                $ARRAY_TYPE,
+                $TO_TYPE,
+                10000i64
+            ),
+            5 => int_decimal_cast_from_array!(
+                $ARRAY,
+                Int64Decimal5Builder,
+                $ARRAY_TYPE,
+                $TO_TYPE,
+                100000i64
+            ),
+            10 => int_decimal_cast_from_array!(
+                $ARRAY,
+                Int64Decimal10Builder,
+                $ARRAY_TYPE,
+                $TO_TYPE,
+                10000000000i64
+            ),
+            x => panic!("Unsupported scale: {}", x),
+        }
+    }};
 }
 
 /// Cast `array` to the provided data type and return a new Array with
@@ -293,6 +581,7 @@ pub fn cast(array: &ArrayRef, to_type: &DataType) -> Result<ArrayRef> {
             DataType::Int16 => dictionary_cast::<Int16Type>(array, to_type),
             DataType::Int32 => dictionary_cast::<Int32Type>(array, to_type),
             DataType::Int64 => dictionary_cast::<Int64Type>(array, to_type),
+            // TODO
             DataType::UInt8 => dictionary_cast::<UInt8Type>(array, to_type),
             DataType::UInt16 => dictionary_cast::<UInt16Type>(array, to_type),
             DataType::UInt32 => dictionary_cast::<UInt32Type>(array, to_type),
@@ -307,6 +596,7 @@ pub fn cast(array: &ArrayRef, to_type: &DataType) -> Result<ArrayRef> {
             DataType::Int16 => cast_to_dictionary::<Int16Type>(array, value_type),
             DataType::Int32 => cast_to_dictionary::<Int32Type>(array, value_type),
             DataType::Int64 => cast_to_dictionary::<Int64Type>(array, value_type),
+            // TODO
             DataType::UInt8 => cast_to_dictionary::<UInt8Type>(array, value_type),
             DataType::UInt16 => cast_to_dictionary::<UInt16Type>(array, value_type),
             DataType::UInt32 => cast_to_dictionary::<UInt32Type>(array, value_type),
@@ -494,6 +784,68 @@ pub fn cast(array: &ArrayRef, to_type: &DataType) -> Result<ArrayRef> {
         (Int64, Int32) => cast_numeric_arrays::<Int64Type, Int32Type>(array),
         (Int64, Float32) => cast_numeric_arrays::<Int64Type, Float32Type>(array),
         (Int64, Float64) => cast_numeric_arrays::<Int64Type, Float64Type>(array),
+
+        (Int64Decimal(scale), UInt8) => {
+            int_decimal_cast_to!(array, UInt8Builder, u8, scale)
+        }
+        (Int64Decimal(scale), UInt16) => {
+            int_decimal_cast_to!(array, UInt16Builder, u16, scale)
+        }
+        (Int64Decimal(scale), UInt32) => {
+            int_decimal_cast_to!(array, UInt32Builder, u32, scale)
+        }
+        (Int64Decimal(scale), UInt64) => {
+            int_decimal_cast_to!(array, UInt64Builder, u64, scale)
+        }
+        (Int64Decimal(scale), Int8) => {
+            int_decimal_cast_to!(array, Int8Builder, i8, scale)
+        }
+        (Int64Decimal(scale), Int16) => {
+            int_decimal_cast_to!(array, Int16Builder, i16, scale)
+        }
+        (Int64Decimal(scale), Int32) => {
+            int_decimal_cast_to!(array, Int32Builder, i32, scale)
+        }
+        (Int64Decimal(scale), Int64) => {
+            int_decimal_cast_to!(array, Int64Builder, i64, scale)
+        }
+        (Int64Decimal(scale), Float32) => {
+            int_decimal_cast_to!(array, Float32Builder, f32, scale)
+        }
+        (Int64Decimal(scale), Float64) => {
+            int_decimal_cast_to!(array, Float64Builder, f64, scale)
+        }
+
+        (UInt8, Int64Decimal(scale)) => {
+            int_decimal_cast_from!(array, UInt8Array, u8, scale)
+        }
+        (UInt16, Int64Decimal(scale)) => {
+            int_decimal_cast_from!(array, UInt16Array, u16, scale)
+        }
+        (UInt32, Int64Decimal(scale)) => {
+            int_decimal_cast_from!(array, UInt32Array, u32, scale)
+        }
+        (UInt64, Int64Decimal(scale)) => {
+            int_decimal_cast_from!(array, UInt64Array, u64, scale)
+        }
+        (Int8, Int64Decimal(scale)) => {
+            int_decimal_cast_from!(array, Int8Array, i8, scale)
+        }
+        (Int16, Int64Decimal(scale)) => {
+            int_decimal_cast_from!(array, Int16Array, i16, scale)
+        }
+        (Int32, Int64Decimal(scale)) => {
+            int_decimal_cast_from!(array, Int32Array, i32, scale)
+        }
+        (Int64, Int64Decimal(scale)) => {
+            int_decimal_cast_from!(array, Int64Array, i64, scale)
+        }
+        (Float32, Int64Decimal(scale)) => {
+            int_decimal_cast_from!(array, Float32Array, f32, scale)
+        }
+        (Float64, Int64Decimal(scale)) => {
+            int_decimal_cast_from!(array, Float64Array, f64, scale)
+        }
 
         (Float32, UInt8) => cast_numeric_arrays::<Float32Type, UInt8Type>(array),
         (Float32, UInt16) => cast_numeric_arrays::<Float32Type, UInt16Type>(array),

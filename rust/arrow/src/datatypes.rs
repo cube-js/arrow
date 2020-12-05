@@ -147,6 +147,8 @@ pub enum DataType {
     Dictionary(Box<DataType>, Box<DataType>),
     /// Decimal value with precision and scale
     Decimal(usize, usize),
+    /// Int64 mapped decimal
+    Int64Decimal(usize),
 }
 
 /// Date is either a 32-bit or 64-bit type representing elapsed time since UNIX
@@ -408,6 +410,13 @@ make_type!(Int8Type, i8, DataType::Int8);
 make_type!(Int16Type, i16, DataType::Int16);
 make_type!(Int32Type, i32, DataType::Int32);
 make_type!(Int64Type, i64, DataType::Int64);
+make_type!(Int64Decimal0Type, i64, DataType::Int64Decimal(0));
+make_type!(Int64Decimal1Type, i64, DataType::Int64Decimal(1));
+make_type!(Int64Decimal2Type, i64, DataType::Int64Decimal(2));
+make_type!(Int64Decimal3Type, i64, DataType::Int64Decimal(3));
+make_type!(Int64Decimal4Type, i64, DataType::Int64Decimal(4));
+make_type!(Int64Decimal5Type, i64, DataType::Int64Decimal(5));
+make_type!(Int64Decimal10Type, i64, DataType::Int64Decimal(10));
 make_type!(UInt8Type, u8, DataType::UInt8);
 make_type!(UInt16Type, u16, DataType::UInt16);
 make_type!(UInt32Type, u32, DataType::UInt32);
@@ -786,6 +795,13 @@ make_numeric_type!(Int8Type, i8, i8x64, m8x64);
 make_numeric_type!(Int16Type, i16, i16x32, m16x32);
 make_numeric_type!(Int32Type, i32, i32x16, m32x16);
 make_numeric_type!(Int64Type, i64, i64x8, m64x8);
+make_numeric_type!(Int64Decimal0Type, i64, i64x8, m64x8);
+make_numeric_type!(Int64Decimal1Type, i64, i64x8, m64x8);
+make_numeric_type!(Int64Decimal2Type, i64, i64x8, m64x8);
+make_numeric_type!(Int64Decimal3Type, i64, i64x8, m64x8);
+make_numeric_type!(Int64Decimal4Type, i64, i64x8, m64x8);
+make_numeric_type!(Int64Decimal5Type, i64, i64x8, m64x8);
+make_numeric_type!(Int64Decimal10Type, i64, i64x8, m64x8);
 make_numeric_type!(UInt8Type, u8, u8x64, m8x64);
 make_numeric_type!(UInt16Type, u16, u16x32, m16x32);
 make_numeric_type!(UInt32Type, u32, u32x16, m32x16);
@@ -975,6 +991,34 @@ impl DataType {
                         "interval unit missing or invalid".to_string(),
                     )),
                 },
+                Some(s) if s == "decimalint" => match map.get("isSigned") {
+                    Some(&Value::Bool(true)) => match map.get("bitWidth") {
+                        Some(&Value::Number(ref n)) => match n.as_u64() {
+                            Some(64) => match map.get("scale") {
+                                Some(&Value::Number(ref scale)) => match scale.as_u64() {
+                                    Some(scale) => {
+                                        Ok(DataType::Int64Decimal(scale as usize))
+                                    }
+                                    _ => Err(ArrowError::ParseError(
+                                        "decimalint scale invalid".to_string(),
+                                    )),
+                                },
+                                _ => Err(ArrowError::ParseError(
+                                    "decimalint scale missing".to_string(),
+                                )),
+                            },
+                            _ => Err(ArrowError::ParseError(
+                                "decimalint bitWidth missing or invalid".to_string(),
+                            )),
+                        },
+                        _ => Err(ArrowError::ParseError(
+                            "decimalint bitWidth missing or invalid".to_string(),
+                        )),
+                    },
+                    _ => Err(ArrowError::ParseError(
+                        "decimalint signed missing or invalid".to_string(),
+                    )),
+                },
                 Some(s) if s == "int" => match map.get("isSigned") {
                     Some(&Value::Bool(true)) => match map.get("bitWidth") {
                         Some(&Value::Number(ref n)) => match n.as_u64() {
@@ -1054,6 +1098,9 @@ impl DataType {
             DataType::Int16 => json!({"name": "int", "bitWidth": 16, "isSigned": true}),
             DataType::Int32 => json!({"name": "int", "bitWidth": 32, "isSigned": true}),
             DataType::Int64 => json!({"name": "int", "bitWidth": 64, "isSigned": true}),
+            DataType::Int64Decimal(scale) => {
+                json!({"name": "intdecimal", "bitWidth": 64, "isSigned": true, "scale": scale})
+            }
             DataType::UInt8 => json!({"name": "int", "bitWidth": 8, "isSigned": false}),
             DataType::UInt16 => json!({"name": "int", "bitWidth": 16, "isSigned": false}),
             DataType::UInt32 => json!({"name": "int", "bitWidth": 32, "isSigned": false}),
@@ -1449,6 +1496,7 @@ impl Field {
             | DataType::Int16
             | DataType::Int32
             | DataType::Int64
+            | DataType::Int64Decimal(_)
             | DataType::UInt8
             | DataType::UInt16
             | DataType::UInt32
