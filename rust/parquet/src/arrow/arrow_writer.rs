@@ -141,6 +141,7 @@ fn write_leaves(
         | ArrowDataType::Int16
         | ArrowDataType::Int32
         | ArrowDataType::Int64
+        | ArrowDataType::Int64Decimal(_)
         | ArrowDataType::UInt8
         | ArrowDataType::UInt16
         | ArrowDataType::UInt32

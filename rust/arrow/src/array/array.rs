@@ -223,6 +223,15 @@ pub fn make_array(data: ArrayDataRef) -> ArrayRef {
         DataType::Int16 => Arc::new(Int16Array::from(data)) as ArrayRef,
         DataType::Int32 => Arc::new(Int32Array::from(data)) as ArrayRef,
         DataType::Int64 => Arc::new(Int64Array::from(data)) as ArrayRef,
+        DataType::Int64Decimal(0) => Arc::new(Int64Decimal0Array::from(data)) as ArrayRef,
+        DataType::Int64Decimal(1) => Arc::new(Int64Decimal1Array::from(data)) as ArrayRef,
+        DataType::Int64Decimal(2) => Arc::new(Int64Decimal2Array::from(data)) as ArrayRef,
+        DataType::Int64Decimal(3) => Arc::new(Int64Decimal3Array::from(data)) as ArrayRef,
+        DataType::Int64Decimal(4) => Arc::new(Int64Decimal4Array::from(data)) as ArrayRef,
+        DataType::Int64Decimal(5) => Arc::new(Int64Decimal5Array::from(data)) as ArrayRef,
+        DataType::Int64Decimal(10) => {
+            Arc::new(Int64Decimal10Array::from(data)) as ArrayRef
+        }
         DataType::UInt8 => Arc::new(UInt8Array::from(data)) as ArrayRef,
         DataType::UInt16 => Arc::new(UInt16Array::from(data)) as ArrayRef,
         DataType::UInt32 => Arc::new(UInt32Array::from(data)) as ArrayRef,
@@ -303,6 +312,7 @@ pub fn make_array(data: ArrayDataRef) -> ArrayRef {
             DataType::Int64 => {
                 Arc::new(DictionaryArray::<Int64Type>::from(data)) as ArrayRef
             }
+            // TODO
             DataType::UInt8 => {
                 Arc::new(DictionaryArray::<UInt8Type>::from(data)) as ArrayRef
             }

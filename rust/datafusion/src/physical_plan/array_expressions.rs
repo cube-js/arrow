@@ -77,6 +77,27 @@ pub fn array(args: &[ArrayRef]) -> Result<ArrayRef> {
         DataType::Int16 => array!(args, Int16Array, Int16Builder),
         DataType::Int32 => array!(args, Int32Array, Int32Builder),
         DataType::Int64 => array!(args, Int64Array, Int64Builder),
+        DataType::Int64Decimal(0) => {
+            array!(args, Int64Decimal0Array, Int64Decimal0Builder)
+        }
+        DataType::Int64Decimal(1) => {
+            array!(args, Int64Decimal1Array, Int64Decimal1Builder)
+        }
+        DataType::Int64Decimal(2) => {
+            array!(args, Int64Decimal2Array, Int64Decimal2Builder)
+        }
+        DataType::Int64Decimal(3) => {
+            array!(args, Int64Decimal3Array, Int64Decimal3Builder)
+        }
+        DataType::Int64Decimal(4) => {
+            array!(args, Int64Decimal4Array, Int64Decimal4Builder)
+        }
+        DataType::Int64Decimal(5) => {
+            array!(args, Int64Decimal5Array, Int64Decimal5Builder)
+        }
+        DataType::Int64Decimal(10) => {
+            array!(args, Int64Decimal10Array, Int64Decimal10Builder)
+        }
         DataType::UInt8 => array!(args, UInt8Array, UInt8Builder),
         DataType::UInt16 => array!(args, UInt16Array, UInt16Builder),
         DataType::UInt32 => array!(args, UInt32Array, UInt32Builder),
@@ -101,6 +122,13 @@ pub static SUPPORTED_ARRAY_TYPES: &[DataType] = &[
     DataType::Int16,
     DataType::Int32,
     DataType::Int64,
+    DataType::Int64Decimal(0),
+    DataType::Int64Decimal(1),
+    DataType::Int64Decimal(2),
+    DataType::Int64Decimal(3),
+    DataType::Int64Decimal(4),
+    DataType::Int64Decimal(5),
+    DataType::Int64Decimal(10),
     DataType::Float32,
     DataType::Float64,
     DataType::Utf8,

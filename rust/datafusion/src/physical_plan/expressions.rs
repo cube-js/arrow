@@ -29,6 +29,10 @@ use crate::physical_plan::{
     RecordBatchStream, SendableRecordBatchStream,
 };
 use crate::scalar::ScalarValue;
+use array::{
+    Int64Decimal0Array, Int64Decimal10Array, Int64Decimal1Array, Int64Decimal2Array,
+    Int64Decimal3Array, Int64Decimal4Array, Int64Decimal5Array,
+};
 use arrow::array::{self, Array, BooleanBuilder, LargeStringArray, StringBuilder};
 use arrow::compute;
 use arrow::compute::kernels;
@@ -255,6 +259,7 @@ pub fn sum_return_type(arg_type: &DataType) -> Result<DataType> {
         DataType::Int8 | DataType::Int16 | DataType::Int32 | DataType::Int64 => {
             Ok(DataType::Int64)
         }
+        DataType::Int64Decimal(scale) => Ok(DataType::Int64Decimal(*scale)),
         DataType::UInt8 | DataType::UInt16 | DataType::UInt32 | DataType::UInt64 => {
             Ok(DataType::UInt64)
         }
@@ -321,6 +326,11 @@ impl SumAccumulator {
 
 // returns the new value after sum with the new values, taking nullability into account
 macro_rules! typed_sum_delta_batch {
+    ($VALUES:expr, $ARRAYTYPE:ident, Int64Decimal, $SCALE:expr) => {{
+        let array = $VALUES.as_any().downcast_ref::<$ARRAYTYPE>().unwrap();
+        let delta = compute::sum(array);
+        ScalarValue::Int64Decimal(delta, $SCALE)
+    }};
     ($VALUES:expr, $ARRAYTYPE:ident, $SCALAR:ident) => {{
         let array = $VALUES.as_any().downcast_ref::<$ARRAYTYPE>().unwrap();
         let delta = compute::sum(array);
@@ -334,6 +344,27 @@ fn sum_batch(values: &ArrayRef) -> Result<ScalarValue> {
         DataType::Float64 => typed_sum_delta_batch!(values, Float64Array, Float64),
         DataType::Float32 => typed_sum_delta_batch!(values, Float32Array, Float32),
         DataType::Int64 => typed_sum_delta_batch!(values, Int64Array, Int64),
+        DataType::Int64Decimal(0) => {
+            typed_sum_delta_batch!(values, Int64Decimal0Array, Int64Decimal, 0)
+        }
+        DataType::Int64Decimal(1) => {
+            typed_sum_delta_batch!(values, Int64Decimal1Array, Int64Decimal, 1)
+        }
+        DataType::Int64Decimal(2) => {
+            typed_sum_delta_batch!(values, Int64Decimal2Array, Int64Decimal, 2)
+        }
+        DataType::Int64Decimal(3) => {
+            typed_sum_delta_batch!(values, Int64Decimal3Array, Int64Decimal, 3)
+        }
+        DataType::Int64Decimal(4) => {
+            typed_sum_delta_batch!(values, Int64Decimal4Array, Int64Decimal, 4)
+        }
+        DataType::Int64Decimal(5) => {
+            typed_sum_delta_batch!(values, Int64Decimal5Array, Int64Decimal, 5)
+        }
+        DataType::Int64Decimal(10) => {
+            typed_sum_delta_batch!(values, Int64Decimal10Array, Int64Decimal, 10)
+        }
         DataType::Int32 => typed_sum_delta_batch!(values, Int32Array, Int32),
         DataType::Int16 => typed_sum_delta_batch!(values, Int16Array, Int16),
         DataType::Int8 => typed_sum_delta_batch!(values, Int8Array, Int8),
@@ -352,6 +383,17 @@ fn sum_batch(values: &ArrayRef) -> Result<ScalarValue> {
 
 // returns the sum of two scalar values, including coercion into $TYPE.
 macro_rules! typed_sum {
+    ($OLD_VALUE:expr, $DELTA:expr, Int64Decimal, $TYPE:ident, $SCALE:expr) => {{
+        ScalarValue::Int64Decimal(
+            match ($OLD_VALUE, $DELTA) {
+                (None, None) => None,
+                (Some(a), None) => Some(a.clone()),
+                (None, Some(b)) => Some(b.clone() as $TYPE),
+                (Some(a), Some(b)) => Some(a + (*b as $TYPE)),
+            },
+            $SCALE,
+        )
+    }};
     ($OLD_VALUE:expr, $DELTA:expr, $SCALAR:ident, $TYPE:ident) => {{
         ScalarValue::$SCALAR(match ($OLD_VALUE, $DELTA) {
             (None, None) => None,
@@ -424,6 +466,18 @@ fn sum(lhs: &ScalarValue, rhs: &ScalarValue) -> Result<ScalarValue> {
         }
         (ScalarValue::Int64(lhs), ScalarValue::Int8(rhs)) => {
             typed_sum!(lhs, rhs, Int64, i64)
+        }
+        (
+            ScalarValue::Int64Decimal(lhs, l_scale),
+            ScalarValue::Int64Decimal(rhs, r_scale),
+        ) => {
+            if l_scale != r_scale {
+                return Err(DataFusionError::Internal(format!(
+                    "Scale doesn't match: {} and {}",
+                    l_scale, r_scale
+                )));
+            }
+            typed_sum!(lhs, rhs, Int64Decimal, i64, *l_scale)
         }
         e => {
             return Err(DataFusionError::Internal(format!(
@@ -673,6 +727,11 @@ macro_rules! typed_min_max_batch_string {
 
 // Statically-typed version of min/max(array) -> ScalarValue for non-string types.
 macro_rules! typed_min_max_batch {
+    ($VALUES:expr, $ARRAYTYPE:ident, Int64Decimal, $SCALE:expr, $OP:ident) => {{
+        let array = $VALUES.as_any().downcast_ref::<$ARRAYTYPE>().unwrap();
+        let value = compute::$OP(array);
+        ScalarValue::Int64Decimal(value, $SCALE)
+    }};
     ($VALUES:expr, $ARRAYTYPE:ident, $SCALAR:ident, $OP:ident) => {{
         let array = $VALUES.as_any().downcast_ref::<$ARRAYTYPE>().unwrap();
         let value = compute::$OP(array);
@@ -693,6 +752,27 @@ macro_rules! min_max_batch {
                 typed_min_max_batch!($VALUES, Float32Array, Float32, $OP)
             }
             DataType::Int64 => typed_min_max_batch!($VALUES, Int64Array, Int64, $OP),
+            DataType::Int64Decimal(0) => {
+                typed_min_max_batch!($VALUES, Int64Decimal0Array, Int64Decimal, 0, $OP)
+            }
+            DataType::Int64Decimal(1) => {
+                typed_min_max_batch!($VALUES, Int64Decimal1Array, Int64Decimal, 1, $OP)
+            }
+            DataType::Int64Decimal(2) => {
+                typed_min_max_batch!($VALUES, Int64Decimal2Array, Int64Decimal, 2, $OP)
+            }
+            DataType::Int64Decimal(3) => {
+                typed_min_max_batch!($VALUES, Int64Decimal3Array, Int64Decimal, 3, $OP)
+            }
+            DataType::Int64Decimal(4) => {
+                typed_min_max_batch!($VALUES, Int64Decimal4Array, Int64Decimal, 4, $OP)
+            }
+            DataType::Int64Decimal(5) => {
+                typed_min_max_batch!($VALUES, Int64Decimal5Array, Int64Decimal, 5, $OP)
+            }
+            DataType::Int64Decimal(10) => {
+                typed_min_max_batch!($VALUES, Int64Decimal10Array, Int64Decimal, 10, $OP)
+            }
             DataType::Int32 => typed_min_max_batch!($VALUES, Int32Array, Int32, $OP),
             DataType::Int16 => typed_min_max_batch!($VALUES, Int16Array, Int16, $OP),
             DataType::Int8 => typed_min_max_batch!($VALUES, Int8Array, Int8, $OP),
@@ -739,6 +819,17 @@ fn max_batch(values: &ArrayRef) -> Result<ScalarValue> {
 
 // min/max of two non-string scalar values.
 macro_rules! typed_min_max {
+    ($VALUE:expr, $DELTA:expr, Int64Decimal, $OP:ident, $SCALE:expr) => {{
+        ScalarValue::Int64Decimal(
+            match ($VALUE, $DELTA) {
+                (None, None) => None,
+                (Some(a), None) => Some(a.clone()),
+                (None, Some(b)) => Some(b.clone()),
+                (Some(a), Some(b)) => Some((*a).$OP(*b)),
+            },
+            $SCALE,
+        )
+    }};
     ($VALUE:expr, $DELTA:expr, $SCALAR:ident, $OP:ident) => {{
         ScalarValue::$SCALAR(match ($VALUE, $DELTA) {
             (None, None) => None,
@@ -785,6 +876,18 @@ macro_rules! min_max {
             }
             (ScalarValue::Int64(lhs), ScalarValue::Int64(rhs)) => {
                 typed_min_max!(lhs, rhs, Int64, $OP)
+            }
+            (
+                ScalarValue::Int64Decimal(lhs, lscale),
+                ScalarValue::Int64Decimal(rhs, rscale),
+            ) => {
+                if lscale != rscale {
+                    return Err(DataFusionError::Internal(format!(
+                        "Scale mismatch: {} and {}",
+                        lscale, rscale
+                    )));
+                }
+                typed_min_max!(lhs, rhs, Int64Decimal, $OP, *lscale)
             }
             (ScalarValue::Int32(lhs), ScalarValue::Int32(rhs)) => {
                 typed_min_max!(lhs, rhs, Int32, $OP)
@@ -1209,6 +1312,27 @@ macro_rules! binary_primitive_array_op {
             DataType::Int16 => compute_op!($LEFT, $RIGHT, $OP, Int16Array),
             DataType::Int32 => compute_op!($LEFT, $RIGHT, $OP, Int32Array),
             DataType::Int64 => compute_op!($LEFT, $RIGHT, $OP, Int64Array),
+            DataType::Int64Decimal(0) => {
+                compute_op!($LEFT, $RIGHT, $OP, Int64Decimal0Array)
+            }
+            DataType::Int64Decimal(1) => {
+                compute_op!($LEFT, $RIGHT, $OP, Int64Decimal1Array)
+            }
+            DataType::Int64Decimal(2) => {
+                compute_op!($LEFT, $RIGHT, $OP, Int64Decimal2Array)
+            }
+            DataType::Int64Decimal(3) => {
+                compute_op!($LEFT, $RIGHT, $OP, Int64Decimal3Array)
+            }
+            DataType::Int64Decimal(4) => {
+                compute_op!($LEFT, $RIGHT, $OP, Int64Decimal4Array)
+            }
+            DataType::Int64Decimal(5) => {
+                compute_op!($LEFT, $RIGHT, $OP, Int64Decimal5Array)
+            }
+            DataType::Int64Decimal(10) => {
+                compute_op!($LEFT, $RIGHT, $OP, Int64Decimal10Array)
+            }
             DataType::UInt8 => compute_op!($LEFT, $RIGHT, $OP, UInt8Array),
             DataType::UInt16 => compute_op!($LEFT, $RIGHT, $OP, UInt16Array),
             DataType::UInt32 => compute_op!($LEFT, $RIGHT, $OP, UInt32Array),
@@ -1232,6 +1356,27 @@ macro_rules! binary_array_op_scalar {
             DataType::Int16 => compute_op_scalar!($LEFT, $RIGHT, $OP, Int16Array),
             DataType::Int32 => compute_op_scalar!($LEFT, $RIGHT, $OP, Int32Array),
             DataType::Int64 => compute_op_scalar!($LEFT, $RIGHT, $OP, Int64Array),
+            DataType::Int64Decimal(0) => {
+                compute_op_scalar!($LEFT, $RIGHT, $OP, Int64Decimal0Array)
+            }
+            DataType::Int64Decimal(1) => {
+                compute_op_scalar!($LEFT, $RIGHT, $OP, Int64Decimal1Array)
+            }
+            DataType::Int64Decimal(2) => {
+                compute_op_scalar!($LEFT, $RIGHT, $OP, Int64Decimal2Array)
+            }
+            DataType::Int64Decimal(3) => {
+                compute_op_scalar!($LEFT, $RIGHT, $OP, Int64Decimal3Array)
+            }
+            DataType::Int64Decimal(4) => {
+                compute_op_scalar!($LEFT, $RIGHT, $OP, Int64Decimal4Array)
+            }
+            DataType::Int64Decimal(5) => {
+                compute_op_scalar!($LEFT, $RIGHT, $OP, Int64Decimal5Array)
+            }
+            DataType::Int64Decimal(10) => {
+                compute_op_scalar!($LEFT, $RIGHT, $OP, Int64Decimal10Array)
+            }
             DataType::UInt8 => compute_op_scalar!($LEFT, $RIGHT, $OP, UInt8Array),
             DataType::UInt16 => compute_op_scalar!($LEFT, $RIGHT, $OP, UInt16Array),
             DataType::UInt32 => compute_op_scalar!($LEFT, $RIGHT, $OP, UInt32Array),
@@ -1266,6 +1411,27 @@ macro_rules! binary_array_op {
             DataType::Int16 => compute_op!($LEFT, $RIGHT, $OP, Int16Array),
             DataType::Int32 => compute_op!($LEFT, $RIGHT, $OP, Int32Array),
             DataType::Int64 => compute_op!($LEFT, $RIGHT, $OP, Int64Array),
+            DataType::Int64Decimal(0) => {
+                compute_op!($LEFT, $RIGHT, $OP, Int64Decimal0Array)
+            }
+            DataType::Int64Decimal(1) => {
+                compute_op!($LEFT, $RIGHT, $OP, Int64Decimal1Array)
+            }
+            DataType::Int64Decimal(2) => {
+                compute_op!($LEFT, $RIGHT, $OP, Int64Decimal2Array)
+            }
+            DataType::Int64Decimal(3) => {
+                compute_op!($LEFT, $RIGHT, $OP, Int64Decimal3Array)
+            }
+            DataType::Int64Decimal(4) => {
+                compute_op!($LEFT, $RIGHT, $OP, Int64Decimal4Array)
+            }
+            DataType::Int64Decimal(5) => {
+                compute_op!($LEFT, $RIGHT, $OP, Int64Decimal5Array)
+            }
+            DataType::Int64Decimal(10) => {
+                compute_op!($LEFT, $RIGHT, $OP, Int64Decimal10Array)
+            }
             DataType::UInt8 => compute_op!($LEFT, $RIGHT, $OP, UInt8Array),
             DataType::UInt16 => compute_op!($LEFT, $RIGHT, $OP, UInt16Array),
             DataType::UInt32 => compute_op!($LEFT, $RIGHT, $OP, UInt32Array),
@@ -1360,6 +1526,27 @@ macro_rules! condition_primitive_array_op {
             DataType::Int16 => condition_op!($CONDITION, $LEFT, $RIGHT, Int16Array),
             DataType::Int32 => condition_op!($CONDITION, $LEFT, $RIGHT, Int32Array),
             DataType::Int64 => condition_op!($CONDITION, $LEFT, $RIGHT, Int64Array),
+            DataType::Int64Decimal(0) => {
+                condition_op!($CONDITION, $LEFT, $RIGHT, Int64Decimal0Array)
+            }
+            DataType::Int64Decimal(1) => {
+                condition_op!($CONDITION, $LEFT, $RIGHT, Int64Decimal1Array)
+            }
+            DataType::Int64Decimal(2) => {
+                condition_op!($CONDITION, $LEFT, $RIGHT, Int64Decimal2Array)
+            }
+            DataType::Int64Decimal(3) => {
+                condition_op!($CONDITION, $LEFT, $RIGHT, Int64Decimal3Array)
+            }
+            DataType::Int64Decimal(4) => {
+                condition_op!($CONDITION, $LEFT, $RIGHT, Int64Decimal4Array)
+            }
+            DataType::Int64Decimal(5) => {
+                condition_op!($CONDITION, $LEFT, $RIGHT, Int64Decimal5Array)
+            }
+            DataType::Int64Decimal(10) => {
+                condition_op!($CONDITION, $LEFT, $RIGHT, Int64Decimal10Array)
+            }
             DataType::UInt8 => condition_op!($CONDITION, $LEFT, $RIGHT, UInt8Array),
             DataType::UInt16 => condition_op!($CONDITION, $LEFT, $RIGHT, UInt16Array),
             DataType::UInt32 => condition_op!($CONDITION, $LEFT, $RIGHT, UInt32Array),
@@ -1470,6 +1657,25 @@ fn string_coercion(lhs_type: &DataType, rhs_type: &DataType) -> Option<DataType>
     }
 }
 
+/// Coercion rule for numerical types: multiplication and division operations
+pub fn multi_div_conversion(
+    lhs_type: &DataType,
+    rhs_type: &DataType,
+) -> Option<DataType> {
+    use arrow::datatypes::DataType::*;
+
+    // error on any non-numeric type
+    if !is_numeric(lhs_type) || !is_numeric(rhs_type) {
+        return None;
+    };
+
+    match (lhs_type, rhs_type) {
+        (_, Int64Decimal(_)) => Some(Float64),
+        (Int64Decimal(_), _) => Some(Float64),
+        _ => None,
+    }
+}
+
 /// Coercion rules for Temporal columns: the type that both lhs and rhs can be
 /// casted to for the purpose of a date computation
 fn temporal_coercion(lhs_type: &DataType, rhs_type: &DataType) -> Option<DataType> {
@@ -1507,6 +1713,12 @@ pub fn numerical_coercion(lhs_type: &DataType, rhs_type: &DataType) -> Option<Da
 
         (_, Float32) => Some(Float32),
         (Float32, _) => Some(Float32),
+
+        (Int64Decimal(scale_a), Int64Decimal(scale_b)) => {
+            Some(Int64Decimal(std::cmp::max(*scale_a, *scale_b)))
+        }
+        (_, Int64Decimal(scale)) => Some(Int64Decimal(*scale)),
+        (Int64Decimal(scale), _) => Some(Int64Decimal(*scale)),
 
         (Int64, _) => Some(Int64),
         (_, Int64) => Some(Int64),
@@ -1592,9 +1804,9 @@ fn common_binary_type(
         }
         // for math expressions, the final value of the coercion is also the return type
         // because coercion favours higher information types
-        Operator::Plus | Operator::Minus | Operator::Divide | Operator::Multiply => {
-            numerical_coercion(lhs_type, rhs_type)
-        }
+        Operator::Divide | Operator::Multiply => multi_div_conversion(lhs_type, rhs_type)
+            .or_else(|| numerical_coercion(lhs_type, rhs_type)),
+        Operator::Plus | Operator::Minus => numerical_coercion(lhs_type, rhs_type),
         Operator::Modulus => {
             return Err(DataFusionError::NotImplemented(
                 "Modulus operator is still not supported".to_string(),
@@ -1835,6 +2047,27 @@ macro_rules! primitive_bool_array_op {
             DataType::Int16 => compute_bool_array_op!($LEFT, $RIGHT, $OP, Int16Array),
             DataType::Int32 => compute_bool_array_op!($LEFT, $RIGHT, $OP, Int32Array),
             DataType::Int64 => compute_bool_array_op!($LEFT, $RIGHT, $OP, Int64Array),
+            DataType::Int64Decimal(0) => {
+                compute_bool_array_op!($LEFT, $RIGHT, $OP, Int64Decimal0Array)
+            }
+            DataType::Int64Decimal(1) => {
+                compute_bool_array_op!($LEFT, $RIGHT, $OP, Int64Decimal1Array)
+            }
+            DataType::Int64Decimal(2) => {
+                compute_bool_array_op!($LEFT, $RIGHT, $OP, Int64Decimal2Array)
+            }
+            DataType::Int64Decimal(3) => {
+                compute_bool_array_op!($LEFT, $RIGHT, $OP, Int64Decimal3Array)
+            }
+            DataType::Int64Decimal(4) => {
+                compute_bool_array_op!($LEFT, $RIGHT, $OP, Int64Decimal4Array)
+            }
+            DataType::Int64Decimal(5) => {
+                compute_bool_array_op!($LEFT, $RIGHT, $OP, Int64Decimal5Array)
+            }
+            DataType::Int64Decimal(10) => {
+                compute_bool_array_op!($LEFT, $RIGHT, $OP, Int64Decimal10Array)
+            }
             DataType::UInt8 => compute_bool_array_op!($LEFT, $RIGHT, $OP, UInt8Array),
             DataType::UInt16 => compute_bool_array_op!($LEFT, $RIGHT, $OP, UInt16Array),
             DataType::UInt32 => compute_bool_array_op!($LEFT, $RIGHT, $OP, UInt32Array),
@@ -1882,6 +2115,13 @@ pub static SUPPORTED_NULLIF_TYPES: &[DataType] = &[
     DataType::Int16,
     DataType::Int32,
     DataType::Int64,
+    DataType::Int64Decimal(0),
+    DataType::Int64Decimal(1),
+    DataType::Int64Decimal(2),
+    DataType::Int64Decimal(3),
+    DataType::Int64Decimal(4),
+    DataType::Int64Decimal(5),
+    DataType::Int64Decimal(10),
     DataType::Float32,
     DataType::Float64,
 ];
@@ -2321,6 +2561,55 @@ pub fn if_then_else(
             true_values,
             false_values
         ),
+        DataType::Int64Decimal(0) => if_then_else!(
+            array::Int64Decimal0Builder,
+            array::Int64Decimal0Array,
+            bools,
+            true_values,
+            false_values
+        ),
+        DataType::Int64Decimal(1) => if_then_else!(
+            array::Int64Decimal1Builder,
+            array::Int64Decimal1Array,
+            bools,
+            true_values,
+            false_values
+        ),
+        DataType::Int64Decimal(2) => if_then_else!(
+            array::Int64Decimal2Builder,
+            array::Int64Decimal2Array,
+            bools,
+            true_values,
+            false_values
+        ),
+        DataType::Int64Decimal(3) => if_then_else!(
+            array::Int64Decimal3Builder,
+            array::Int64Decimal3Array,
+            bools,
+            true_values,
+            false_values
+        ),
+        DataType::Int64Decimal(4) => if_then_else!(
+            array::Int64Decimal4Builder,
+            array::Int64Decimal4Array,
+            bools,
+            true_values,
+            false_values
+        ),
+        DataType::Int64Decimal(5) => if_then_else!(
+            array::Int64Decimal5Builder,
+            array::Int64Decimal5Array,
+            bools,
+            true_values,
+            false_values
+        ),
+        DataType::Int64Decimal(10) => if_then_else!(
+            array::Int64Decimal10Builder,
+            array::Int64Decimal10Array,
+            bools,
+            true_values,
+            false_values
+        ),
         DataType::Float32 => if_then_else!(
             array::Float32Builder,
             array::Float32Array,
@@ -2390,6 +2679,27 @@ fn build_null_array(data_type: &DataType, num_rows: usize) -> Result<ArrayRef> {
         DataType::Int16 => make_null_array!(array::Int16Builder, num_rows),
         DataType::Int32 => make_null_array!(array::Int32Builder, num_rows),
         DataType::Int64 => make_null_array!(array::Int64Builder, num_rows),
+        DataType::Int64Decimal(0) => {
+            make_null_array!(array::Int64Decimal0Builder, num_rows)
+        }
+        DataType::Int64Decimal(1) => {
+            make_null_array!(array::Int64Decimal1Builder, num_rows)
+        }
+        DataType::Int64Decimal(2) => {
+            make_null_array!(array::Int64Decimal2Builder, num_rows)
+        }
+        DataType::Int64Decimal(3) => {
+            make_null_array!(array::Int64Decimal3Builder, num_rows)
+        }
+        DataType::Int64Decimal(4) => {
+            make_null_array!(array::Int64Decimal4Builder, num_rows)
+        }
+        DataType::Int64Decimal(5) => {
+            make_null_array!(array::Int64Decimal5Builder, num_rows)
+        }
+        DataType::Int64Decimal(10) => {
+            make_null_array!(array::Int64Decimal10Builder, num_rows)
+        }
         DataType::Float32 => make_null_array!(array::Float32Builder, num_rows),
         DataType::Float64 => make_null_array!(array::Float64Builder, num_rows),
         DataType::Utf8 => make_null_array!(array::StringBuilder, num_rows),
@@ -2440,6 +2750,27 @@ fn array_equals(
         DataType::Int16 => array_equals!(array::Int16Array, when_value, base_value),
         DataType::Int32 => array_equals!(array::Int32Array, when_value, base_value),
         DataType::Int64 => array_equals!(array::Int64Array, when_value, base_value),
+        DataType::Int64Decimal(0) => {
+            array_equals!(array::Int64Decimal0Array, when_value, base_value)
+        }
+        DataType::Int64Decimal(1) => {
+            array_equals!(array::Int64Decimal1Array, when_value, base_value)
+        }
+        DataType::Int64Decimal(2) => {
+            array_equals!(array::Int64Decimal2Array, when_value, base_value)
+        }
+        DataType::Int64Decimal(3) => {
+            array_equals!(array::Int64Decimal3Array, when_value, base_value)
+        }
+        DataType::Int64Decimal(4) => {
+            array_equals!(array::Int64Decimal4Array, when_value, base_value)
+        }
+        DataType::Int64Decimal(5) => {
+            array_equals!(array::Int64Decimal5Array, when_value, base_value)
+        }
+        DataType::Int64Decimal(10) => {
+            array_equals!(array::Int64Decimal10Array, when_value, base_value)
+        }
         DataType::Float32 => array_equals!(array::Float32Array, when_value, base_value),
         DataType::Float64 => array_equals!(array::Float64Array, when_value, base_value),
         DataType::Utf8 => array_equals!(array::StringArray, when_value, base_value),
@@ -2604,6 +2935,7 @@ pub fn is_signed_numeric(dt: &DataType) -> bool {
             | DataType::Float16
             | DataType::Float32
             | DataType::Float64
+            | DataType::Int64Decimal(_)
     )
 }
 

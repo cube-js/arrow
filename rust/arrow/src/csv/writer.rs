@@ -144,6 +144,7 @@ impl<W: Write> Writer<W> {
                 DataType::Int16 => write_primitive_value::<Int16Type>(col, row_index),
                 DataType::Int32 => write_primitive_value::<Int32Type>(col, row_index),
                 DataType::Int64 => write_primitive_value::<Int64Type>(col, row_index),
+                // TODO
                 DataType::UInt8 => write_primitive_value::<UInt8Type>(col, row_index),
                 DataType::UInt16 => write_primitive_value::<UInt16Type>(col, row_index),
                 DataType::UInt32 => write_primitive_value::<UInt32Type>(col, row_index),

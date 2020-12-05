@@ -39,8 +39,10 @@ use arrow::datatypes::{
     DurationNanosecondType as ArrowDurationNanosecondType,
     DurationSecondType as ArrowDurationSecondType, Field,
     Float32Type as ArrowFloat32Type, Float64Type as ArrowFloat64Type,
-    Int16Type as ArrowInt16Type, Int32Type as ArrowInt32Type,
-    Int64Type as ArrowInt64Type, Int8Type as ArrowInt8Type, IntervalUnit, Schema,
+    Int16Type as ArrowInt16Type, Int32Type as ArrowInt32Type, Int64Decimal0Type,
+    Int64Decimal10Type, Int64Decimal1Type, Int64Decimal2Type, Int64Decimal3Type,
+    Int64Decimal4Type, Int64Decimal5Type, Int64Type as ArrowInt64Type,
+    Int8Type as ArrowInt8Type, IntervalUnit, Schema,
     Time32MillisecondType as ArrowTime32MillisecondType,
     Time32SecondType as ArrowTime32SecondType,
     Time64MicrosecondType as ArrowTime64MicrosecondType,
@@ -271,7 +273,13 @@ impl<T: DataType> ArrayReader for PrimitiveArrayReader<T> {
         let arrow_data_type = match T::get_physical_type() {
             PhysicalType::BOOLEAN => ArrowBooleanType::DATA_TYPE,
             PhysicalType::INT32 => ArrowInt32Type::DATA_TYPE,
-            PhysicalType::INT64 => ArrowInt64Type::DATA_TYPE,
+            PhysicalType::INT64 => {
+                if self.column_desc.logical_type() == LogicalType::DECIMAL {
+                    self.get_data_type().clone()
+                } else {
+                    ArrowInt64Type::DATA_TYPE
+                }
+            }
             PhysicalType::FLOAT => ArrowFloat32Type::DATA_TYPE,
             PhysicalType::DOUBLE => ArrowFloat64Type::DATA_TYPE,
             PhysicalType::INT96
@@ -314,8 +322,35 @@ impl<T: DataType> ArrayReader for PrimitiveArrayReader<T> {
                     as ArrayRef
             }
             PhysicalType::INT64 => {
-                Arc::new(PrimitiveArray::<ArrowInt64Type>::from(array_data.build()))
-                    as ArrayRef
+                if self.column_desc.logical_type() == LogicalType::DECIMAL {
+                    match self.column_desc.type_scale() {
+                        0 => Arc::new(PrimitiveArray::<Int64Decimal0Type>::from(
+                            array_data.build(),
+                        )) as ArrayRef,
+                        1 => Arc::new(PrimitiveArray::<Int64Decimal1Type>::from(
+                            array_data.build(),
+                        )) as ArrayRef,
+                        2 => Arc::new(PrimitiveArray::<Int64Decimal2Type>::from(
+                            array_data.build(),
+                        )) as ArrayRef,
+                        3 => Arc::new(PrimitiveArray::<Int64Decimal3Type>::from(
+                            array_data.build(),
+                        )) as ArrayRef,
+                        4 => Arc::new(PrimitiveArray::<Int64Decimal4Type>::from(
+                            array_data.build(),
+                        )) as ArrayRef,
+                        5 => Arc::new(PrimitiveArray::<Int64Decimal5Type>::from(
+                            array_data.build(),
+                        )) as ArrayRef,
+                        10 => Arc::new(PrimitiveArray::<Int64Decimal10Type>::from(
+                            array_data.build(),
+                        )) as ArrayRef,
+                        x => return Err(ArrowError(format!("Unsupported scale: {}", x))),
+                    }
+                } else {
+                    Arc::new(PrimitiveArray::<ArrowInt64Type>::from(array_data.build()))
+                        as ArrayRef
+                }
             }
             PhysicalType::FLOAT => {
                 Arc::new(PrimitiveArray::<ArrowFloat32Type>::from(array_data.build()))

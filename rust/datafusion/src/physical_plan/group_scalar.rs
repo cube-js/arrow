@@ -34,6 +34,7 @@ pub(crate) enum GroupByScalar {
     Int16(i16),
     Int32(i32),
     Int64(i64),
+    // TODO
     Utf8(Box<String>),
     TimeMicrosecond(i64),
     TimeNanosecond(i64),
@@ -49,6 +50,7 @@ impl TryFrom<&ScalarValue> for GroupByScalar {
             ScalarValue::Int16(Some(v)) => GroupByScalar::Int16(*v),
             ScalarValue::Int32(Some(v)) => GroupByScalar::Int32(*v),
             ScalarValue::Int64(Some(v)) => GroupByScalar::Int64(*v),
+            // TODO
             ScalarValue::UInt8(Some(v)) => GroupByScalar::UInt8(*v),
             ScalarValue::UInt16(Some(v)) => GroupByScalar::UInt16(*v),
             ScalarValue::UInt32(Some(v)) => GroupByScalar::UInt32(*v),
@@ -86,6 +88,7 @@ impl From<&GroupByScalar> for ScalarValue {
             GroupByScalar::Int16(v) => ScalarValue::Int16(Some(*v)),
             GroupByScalar::Int32(v) => ScalarValue::Int32(Some(*v)),
             GroupByScalar::Int64(v) => ScalarValue::Int64(Some(*v)),
+            // TODO
             GroupByScalar::UInt8(v) => ScalarValue::UInt8(Some(*v)),
             GroupByScalar::UInt16(v) => ScalarValue::UInt16(Some(*v)),
             GroupByScalar::UInt32(v) => ScalarValue::UInt32(Some(*v)),

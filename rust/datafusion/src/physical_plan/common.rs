@@ -30,6 +30,10 @@ use array::{
     Int8Array, LargeStringArray, StringArray, UInt16Array, UInt32Array, UInt64Array,
     UInt8Array,
 };
+use array::{
+    Int64Decimal0Array, Int64Decimal10Array, Int64Decimal1Array, Int64Decimal2Array,
+    Int64Decimal3Array, Int64Decimal4Array, Int64Decimal5Array,
+};
 use arrow::array::{TimestampMicrosecondArray, TimestampNanosecondArray};
 use arrow::datatypes::{DataType, SchemaRef, TimeUnit};
 use arrow::error::Result as ArrowResult;
@@ -127,6 +131,27 @@ pub fn create_batch_empty(schema: &Schema) -> ArrowResult<RecordBatch> {
             }
             DataType::Int64 => {
                 Ok(Arc::new(Int64Array::from(vec![] as Vec<i64>)) as ArrayRef)
+            }
+            DataType::Int64Decimal(0) => {
+                Ok(Arc::new(Int64Decimal0Array::from(vec![] as Vec<i64>)) as ArrayRef)
+            }
+            DataType::Int64Decimal(1) => {
+                Ok(Arc::new(Int64Decimal1Array::from(vec![] as Vec<i64>)) as ArrayRef)
+            }
+            DataType::Int64Decimal(2) => {
+                Ok(Arc::new(Int64Decimal2Array::from(vec![] as Vec<i64>)) as ArrayRef)
+            }
+            DataType::Int64Decimal(3) => {
+                Ok(Arc::new(Int64Decimal3Array::from(vec![] as Vec<i64>)) as ArrayRef)
+            }
+            DataType::Int64Decimal(4) => {
+                Ok(Arc::new(Int64Decimal4Array::from(vec![] as Vec<i64>)) as ArrayRef)
+            }
+            DataType::Int64Decimal(5) => {
+                Ok(Arc::new(Int64Decimal5Array::from(vec![] as Vec<i64>)) as ArrayRef)
+            }
+            DataType::Int64Decimal(10) => {
+                Ok(Arc::new(Int64Decimal10Array::from(vec![] as Vec<i64>)) as ArrayRef)
             }
             DataType::Int32 => {
                 Ok(Arc::new(Int32Array::from(vec![] as Vec<i32>)) as ArrayRef)

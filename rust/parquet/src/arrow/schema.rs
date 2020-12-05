@@ -334,6 +334,13 @@ fn arrow_to_parquet_type(field: &Field) -> Result<Type> {
         DataType::Int64 => Type::primitive_type_builder(name, PhysicalType::INT64)
             .with_repetition(repetition)
             .build(),
+        DataType::Int64Decimal(scale) => {
+            Type::primitive_type_builder(name, PhysicalType::INT64)
+                .with_logical_type(LogicalType::DECIMAL)
+                .with_scale(*scale as i32)
+                .with_repetition(repetition)
+                .build()
+        }
         DataType::UInt8 => Type::primitive_type_builder(name, PhysicalType::INT32)
             .with_logical_type(LogicalType::UINT_8)
             .with_repetition(repetition)
@@ -603,6 +610,15 @@ impl ParquetTypeConverter<'_> {
             LogicalType::TIMESTAMP_MICROS => {
                 Ok(DataType::Timestamp(TimeUnit::Microsecond, None))
             }
+            LogicalType::DECIMAL => match self.schema {
+                Type::PrimitiveType { scale, .. } => {
+                    Ok(DataType::Int64Decimal(*scale as usize))
+                }
+                _ => Err(ArrowError(format!(
+                    "Scale is missing for {:?}",
+                    self.schema
+                ))),
+            },
             other => Err(ArrowError(format!(
                 "Unable to convert parquet INT64 logical type {}",
                 other

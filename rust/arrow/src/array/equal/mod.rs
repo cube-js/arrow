@@ -184,6 +184,9 @@ fn equal_values(
         DataType::Int16 => primitive_equal::<i16>(lhs, rhs, lhs_start, rhs_start, len),
         DataType::Int32 => primitive_equal::<i32>(lhs, rhs, lhs_start, rhs_start, len),
         DataType::Int64 => primitive_equal::<i64>(lhs, rhs, lhs_start, rhs_start, len),
+        DataType::Int64Decimal(_) => {
+            primitive_equal::<i64>(lhs, rhs, lhs_start, rhs_start, len)
+        }
         DataType::Float32 => primitive_equal::<f32>(lhs, rhs, lhs_start, rhs_start, len),
         DataType::Float64 => primitive_equal::<f64>(lhs, rhs, lhs_start, rhs_start, len),
         DataType::Date32(_)
@@ -246,6 +249,7 @@ fn equal_values(
             DataType::Int64 => {
                 dictionary_equal::<i64>(lhs, rhs, lhs_start, rhs_start, len)
             }
+            // TODO
             DataType::UInt8 => {
                 dictionary_equal::<u8>(lhs, rhs, lhs_start, rhs_start, len)
             }

@@ -72,6 +72,7 @@ pub fn array_value_to_string(column: &array::ArrayRef, row: usize) -> Result<Str
         DataType::Int16 => make_string!(array::Int16Array, column, row),
         DataType::Int32 => make_string!(array::Int32Array, column, row),
         DataType::Int64 => make_string!(array::Int64Array, column, row),
+        // TODO
         DataType::UInt8 => make_string!(array::UInt8Array, column, row),
         DataType::UInt16 => make_string!(array::UInt16Array, column, row),
         DataType::UInt32 => make_string!(array::UInt32Array, column, row),
@@ -111,6 +112,7 @@ pub fn array_value_to_string(column: &array::ArrayRef, row: usize) -> Result<Str
             DataType::Int16 => dict_array_value_to_string::<Int16Type>(column, row),
             DataType::Int32 => dict_array_value_to_string::<Int32Type>(column, row),
             DataType::Int64 => dict_array_value_to_string::<Int64Type>(column, row),
+            //TODO
             DataType::UInt8 => dict_array_value_to_string::<UInt8Type>(column, row),
             DataType::UInt16 => dict_array_value_to_string::<UInt16Type>(column, row),
             DataType::UInt32 => dict_array_value_to_string::<UInt32Type>(column, row),

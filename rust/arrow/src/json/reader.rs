@@ -74,6 +74,7 @@ fn coerce_data_type(dt: Vec<&DataType>) -> Result<DataType> {
             )))) || dt.contains(&&DataType::List(Box::new(Field::new(
                 "item",
                 DataType::Int64,
+                // TODO
                 true,
             )))) || dt.contains(&&DataType::List(Box::new(Field::new(
                 "item",
@@ -105,6 +106,7 @@ fn coerce_data_type(dt: Vec<&DataType>) -> Result<DataType> {
                         }
                     }
                     (t1, DataType::List(e)) if e.data_type() == &DataType::Int64 => {
+                        // TODO
                         if t1 == &DataType::Int64 {
                             Ok(DataType::List(Box::new(Field::new(
                                 "item",

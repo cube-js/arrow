@@ -24,6 +24,10 @@ use arrow::array::{
     TimestampMicrosecondArray, TimestampNanosecondArray, UInt16Builder, UInt32Builder,
     UInt64Builder, UInt8Builder,
 };
+use arrow::array::{
+    Int64Decimal0Array, Int64Decimal10Array, Int64Decimal1Array, Int64Decimal2Array,
+    Int64Decimal3Array, Int64Decimal4Array, Int64Decimal5Array,
+};
 use arrow::{
     array::ArrayRef,
     datatypes::{DataType, Field},
@@ -59,6 +63,8 @@ pub enum ScalarValue {
     Int32(Option<i32>),
     /// signed 64bit int
     Int64(Option<i64>),
+    /// Int64 mapped decimal
+    Int64Decimal(Option<i64>, u8),
     /// unsigned 8bit int
     UInt8(Option<u8>),
     /// unsigned 16bit int
@@ -82,6 +88,16 @@ pub enum ScalarValue {
 }
 
 macro_rules! typed_cast {
+    ($array:expr, $index:expr, $ARRAYTYPE:ident, Int64Decimal, $SCALE:expr) => {{
+        let array = $array.as_any().downcast_ref::<$ARRAYTYPE>().unwrap();
+        ScalarValue::Int64Decimal(
+            match array.is_null($index) {
+                true => None,
+                false => Some(array.value($index).into()),
+            },
+            $SCALE,
+        )
+    }};
     ($array:expr, $index:expr, $ARRAYTYPE:ident, $SCALAR:ident) => {{
         let array = $array.as_any().downcast_ref::<$ARRAYTYPE>().unwrap();
         ScalarValue::$SCALAR(match array.is_null($index) {
@@ -146,6 +162,9 @@ impl ScalarValue {
             ScalarValue::Int16(_) => DataType::Int16,
             ScalarValue::Int32(_) => DataType::Int32,
             ScalarValue::Int64(_) => DataType::Int64,
+            ScalarValue::Int64Decimal(_, scale) => {
+                DataType::Int64Decimal(*scale as usize)
+            }
             ScalarValue::TimeMicrosecond(_) => {
                 DataType::Timestamp(TimeUnit::Microsecond, None)
             }
@@ -222,6 +241,30 @@ impl ScalarValue {
             ScalarValue::Int16(e) => Arc::new(Int16Array::from(vec![*e; size])),
             ScalarValue::Int32(e) => Arc::new(Int32Array::from(vec![*e; size])),
             ScalarValue::Int64(e) => Arc::new(Int64Array::from(vec![*e; size])),
+            ScalarValue::Int64Decimal(e, 0) => {
+                Arc::new(Int64Decimal0Array::from(vec![*e; size]))
+            }
+            ScalarValue::Int64Decimal(e, 1) => {
+                Arc::new(Int64Decimal1Array::from(vec![*e; size]))
+            }
+            ScalarValue::Int64Decimal(e, 2) => {
+                Arc::new(Int64Decimal2Array::from(vec![*e; size]))
+            }
+            ScalarValue::Int64Decimal(e, 3) => {
+                Arc::new(Int64Decimal3Array::from(vec![*e; size]))
+            }
+            ScalarValue::Int64Decimal(e, 4) => {
+                Arc::new(Int64Decimal4Array::from(vec![*e; size]))
+            }
+            ScalarValue::Int64Decimal(e, 5) => {
+                Arc::new(Int64Decimal5Array::from(vec![*e; size]))
+            }
+            ScalarValue::Int64Decimal(e, 10) => {
+                Arc::new(Int64Decimal10Array::from(vec![*e; size]))
+            }
+            ScalarValue::Int64Decimal(_, scale) => {
+                panic!("Unexpected scale for Int64Decimal: {}", scale)
+            }
             ScalarValue::UInt8(e) => Arc::new(UInt8Array::from(vec![*e; size])),
             ScalarValue::UInt16(e) => Arc::new(UInt16Array::from(vec![*e; size])),
             ScalarValue::UInt32(e) => Arc::new(UInt32Array::from(vec![*e; size])),
@@ -241,6 +284,7 @@ impl ScalarValue {
                 DataType::Int16 => build_list!(Int16Builder, Int16, values, size),
                 DataType::Int32 => build_list!(Int32Builder, Int32, values, size),
                 DataType::Int64 => build_list!(Int64Builder, Int64, values, size),
+                // TODO
                 DataType::UInt8 => build_list!(UInt8Builder, UInt8, values, size),
                 DataType::UInt16 => build_list!(UInt16Builder, UInt16, values, size),
                 DataType::UInt32 => build_list!(UInt32Builder, UInt32, values, size),
@@ -263,6 +307,27 @@ impl ScalarValue {
             DataType::UInt16 => typed_cast!(array, index, UInt16Array, UInt16),
             DataType::UInt8 => typed_cast!(array, index, UInt8Array, UInt8),
             DataType::Int64 => typed_cast!(array, index, Int64Array, Int64),
+            DataType::Int64Decimal(0) => {
+                typed_cast!(array, index, Int64Decimal0Array, Int64Decimal, 0)
+            }
+            DataType::Int64Decimal(1) => {
+                typed_cast!(array, index, Int64Decimal1Array, Int64Decimal, 1)
+            }
+            DataType::Int64Decimal(2) => {
+                typed_cast!(array, index, Int64Decimal2Array, Int64Decimal, 2)
+            }
+            DataType::Int64Decimal(3) => {
+                typed_cast!(array, index, Int64Decimal3Array, Int64Decimal, 3)
+            }
+            DataType::Int64Decimal(4) => {
+                typed_cast!(array, index, Int64Decimal4Array, Int64Decimal, 4)
+            }
+            DataType::Int64Decimal(5) => {
+                typed_cast!(array, index, Int64Decimal5Array, Int64Decimal, 5)
+            }
+            DataType::Int64Decimal(10) => {
+                typed_cast!(array, index, Int64Decimal10Array, Int64Decimal, 10)
+            }
             DataType::Int32 => typed_cast!(array, index, Int32Array, Int32),
             DataType::Int16 => typed_cast!(array, index, Int16Array, Int16),
             DataType::Int8 => typed_cast!(array, index, Int8Array, Int8),
@@ -420,6 +485,7 @@ impl TryFrom<ScalarValue> for i64 {
             ScalarValue::Int64(Some(inner_value))
             | ScalarValue::TimeMicrosecond(Some(inner_value)) => Ok(inner_value),
             ScalarValue::TimeNanosecond(Some(inner_value)) => Ok(inner_value),
+            ScalarValue::Int64Decimal(Some(inner_value), _) => Ok(inner_value),
             _ => Err(DataFusionError::Internal(format!(
                 "Cannot convert {:?} to {}",
                 value,
@@ -449,6 +515,9 @@ impl TryFrom<&DataType> for ScalarValue {
             DataType::Int16 => ScalarValue::Int16(None),
             DataType::Int32 => ScalarValue::Int32(None),
             DataType::Int64 => ScalarValue::Int64(None),
+            DataType::Int64Decimal(scale) => {
+                ScalarValue::Int64Decimal(None, *scale as u8)
+            }
             DataType::UInt8 => ScalarValue::UInt8(None),
             DataType::UInt16 => ScalarValue::UInt16(None),
             DataType::UInt32 => ScalarValue::UInt32(None),
@@ -487,6 +556,9 @@ impl fmt::Display for ScalarValue {
             ScalarValue::Int16(e) => format_option!(f, e)?,
             ScalarValue::Int32(e) => format_option!(f, e)?,
             ScalarValue::Int64(e) => format_option!(f, e)?,
+            ScalarValue::Int64Decimal(e, scale) => {
+                format_option!(f, e.map(|v| v as f64 / *scale as f64))?
+            }
             ScalarValue::UInt8(e) => format_option!(f, e)?,
             ScalarValue::UInt16(e) => format_option!(f, e)?,
             ScalarValue::UInt32(e) => format_option!(f, e)?,
@@ -522,6 +594,7 @@ impl fmt::Debug for ScalarValue {
             ScalarValue::Int16(_) => write!(f, "Int16({})", self),
             ScalarValue::Int32(_) => write!(f, "Int32({})", self),
             ScalarValue::Int64(_) => write!(f, "Int64({})", self),
+            ScalarValue::Int64Decimal(_, _) => write!(f, "Int64Decimal({})", self),
             ScalarValue::UInt8(_) => write!(f, "UInt8({})", self),
             ScalarValue::UInt16(_) => write!(f, "UInt16({})", self),
             ScalarValue::UInt32(_) => write!(f, "UInt32({})", self),

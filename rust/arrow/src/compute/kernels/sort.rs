@@ -99,6 +99,27 @@ pub fn sort_to_indices(
         DataType::Int16 => sort_primitive::<Int16Type>(values, v, n, vec![], &options),
         DataType::Int32 => sort_primitive::<Int32Type>(values, v, n, vec![], &options),
         DataType::Int64 => sort_primitive::<Int64Type>(values, v, n, vec![], &options),
+        DataType::Int64Decimal(0) => {
+            sort_primitive::<Int64Decimal0Type>(values, v, n, vec![], &options)
+        }
+        DataType::Int64Decimal(1) => {
+            sort_primitive::<Int64Decimal1Type>(values, v, n, vec![], &options)
+        }
+        DataType::Int64Decimal(2) => {
+            sort_primitive::<Int64Decimal2Type>(values, v, n, vec![], &options)
+        }
+        DataType::Int64Decimal(3) => {
+            sort_primitive::<Int64Decimal3Type>(values, v, n, vec![], &options)
+        }
+        DataType::Int64Decimal(4) => {
+            sort_primitive::<Int64Decimal4Type>(values, v, n, vec![], &options)
+        }
+        DataType::Int64Decimal(5) => {
+            sort_primitive::<Int64Decimal5Type>(values, v, n, vec![], &options)
+        }
+        DataType::Int64Decimal(10) => {
+            sort_primitive::<Int64Decimal10Type>(values, v, n, vec![], &options)
+        }
         DataType::UInt8 => sort_primitive::<UInt8Type>(values, v, n, vec![], &options),
         DataType::UInt16 => sort_primitive::<UInt16Type>(values, v, n, vec![], &options),
         DataType::UInt32 => sort_primitive::<UInt32Type>(values, v, n, vec![], &options),
@@ -218,6 +239,7 @@ pub fn sort_to_indices(
                 DataType::Int64 => {
                     sort_string_dictionary::<Int64Type>(values, v, n, &options)
                 }
+                // TODO
                 DataType::UInt8 => {
                     sort_string_dictionary::<UInt8Type>(values, v, n, &options)
                 }
