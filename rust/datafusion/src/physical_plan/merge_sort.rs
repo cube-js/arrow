@@ -265,7 +265,7 @@ fn merge_sort(
         .collect::<ArrowResult<Vec<_>>>()?;
     let new_batch = RecordBatch::try_new(
         batches[0].1.schema(),
-        (0..columns.len())
+        (0..batches[0].1.columns().len())
             .map(|column_index| {
                 let mut column_arrays = columns_to_coalesce
                     .iter()
