@@ -279,6 +279,28 @@ pub fn build_table_i32(
     .unwrap()
 }
 
+pub fn build_table_i32_option(
+    a: (&str, &Vec<Option<i32>>),
+    b: (&str, &Vec<Option<i32>>),
+    c: (&str, &Vec<Option<i32>>),
+) -> RecordBatch {
+    let schema = Schema::new(vec![
+        Field::new(a.0, DataType::Int32, false),
+        Field::new(b.0, DataType::Int32, false),
+        Field::new(c.0, DataType::Int32, false),
+    ]);
+
+    RecordBatch::try_new(
+        Arc::new(schema),
+        vec![
+            Arc::new(Int32Array::from(a.1.clone())),
+            Arc::new(Int32Array::from(b.1.clone())),
+            Arc::new(Int32Array::from(c.1.clone())),
+        ],
+    )
+    .unwrap()
+}
+
 /// Returns the column names on the schema
 pub fn columns(schema: &DFSchema) -> Vec<String> {
     schema.fields().iter().map(|f| f.name().clone()).collect()

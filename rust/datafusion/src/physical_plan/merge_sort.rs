@@ -101,6 +101,10 @@ impl ExecutionPlan for MergeSortExec {
         .into_iter()
         .collect::<Result<Vec<_>>>()?;
 
+        if inputs.len() == 1 {
+            return Ok(inputs.into_iter().next().unwrap());
+        }
+
         Ok(Box::pin(MergeSortStream::new(
             self.input.schema().to_schema_ref(),
             inputs,
@@ -285,6 +289,14 @@ fn merge_sort(
             })
             .collect::<ArrowResult<Vec<_>>>()?,
     )?;
+    assert_eq!(
+        new_batch.num_rows(),
+        batches
+            .iter()
+            .zip(indices.iter())
+            .map(|((offset, _), (new_offset, _))| new_offset - offset)
+            .sum::<usize>()
+    );
     Ok((indices.iter().map(|(i, _)| *i).collect(), new_batch))
 }
 
