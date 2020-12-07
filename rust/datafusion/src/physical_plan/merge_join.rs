@@ -262,21 +262,34 @@ impl Stream for MergeJoinStream {
                     &self.join_type,
                 );
                 Poll::Ready(Some(merge_result.map(
-                    |(new_left_cursor, new_right_cursor, batch)| {
-                        if new_left_cursor < left.num_rows()
-                            && new_right_cursor < right.num_rows()
-                        {
-                            self.left.to_concat = Some((new_left_cursor, left));
-                            self.right.to_concat = Some((new_right_cursor, right));
-                            self.left.current = None;
-                            self.right.current = None;
+                    |(
+                        (new_left_cursor, advance_left),
+                        (new_right_cursor, advance_right),
+                        batch,
+                    )| {
+                        if advance_left {
+                            if new_left_cursor < left.num_rows() {
+                                self.left.to_concat = Some((new_left_cursor, left));
+                                self.left.current = None;
+                            } else {
+                                panic!("Unexpected advance_left state");
+                            }
                         } else {
                             if new_left_cursor == left.num_rows() {
                                 self.left.current = None;
                             } else {
                                 self.left.current = Some((new_left_cursor, left));
                             }
+                        }
 
+                        if advance_right {
+                            if new_right_cursor < right.num_rows() {
+                                self.right.to_concat = Some((new_right_cursor, right));
+                                self.right.current = None;
+                            } else {
+                                panic!("Unexpected advance_right state");
+                            }
+                        } else {
                             if new_right_cursor == right.num_rows() {
                                 self.right.current = None;
                             } else {
@@ -351,6 +364,14 @@ pub fn concat_batches(
                 })
                 .collect::<ArrowResult<Vec<_>>>()?;
             let concat_array = concat(columns.as_slice())?;
+            assert_eq!(
+                concat_array.len(),
+                columns.iter().map(|c| c.len()).sum::<usize>()
+            );
+            assert_eq!(
+                concat_array.null_count(),
+                columns.iter().map(|c| c.null_count()).sum::<usize>()
+            );
             Ok(concat_array)
         })
         .collect::<ArrowResult<Vec<_>>>()?;
@@ -369,33 +390,35 @@ fn merge_join(
     left_cursor: usize,
     right_cursor: usize,
     join_type: &JoinType,
-) -> ArrowResult<(usize, usize, RecordBatch)> {
-    let ((new_left_cursor, left_indices), (new_right_cursor, right_indices)) =
-        merge_join_indices(
-            on_left
-                .iter()
-                .map(|column_name| -> ArrowResult<ArrayRef> {
-                    Ok(left.column(left.schema().index_of(column_name)?).clone())
-                })
-                .collect::<ArrowResult<Vec<_>>>()?
-                .as_slice(),
-            on_right
-                .iter()
-                .map(|column_name| -> ArrowResult<ArrayRef> {
-                    Ok(right.column(right.schema().index_of(column_name)?).clone())
-                })
-                .collect::<ArrowResult<Vec<_>>>()?
-                .as_slice(),
-            left_cursor,
-            right_cursor,
-            last_left,
-            last_right,
-            match join_type {
-                JoinType::Inner => MergeJoinType::Inner,
-                JoinType::Left => MergeJoinType::Left,
-                JoinType::Right => MergeJoinType::Right,
-            },
-        )?;
+) -> ArrowResult<((usize, bool), (usize, bool), RecordBatch)> {
+    let (
+        (new_left_cursor, advance_left, left_indices),
+        (new_right_cursor, advance_right, right_indices),
+    ) = merge_join_indices(
+        on_left
+            .iter()
+            .map(|column_name| -> ArrowResult<ArrayRef> {
+                Ok(left.column(left.schema().index_of(column_name)?).clone())
+            })
+            .collect::<ArrowResult<Vec<_>>>()?
+            .as_slice(),
+        on_right
+            .iter()
+            .map(|column_name| -> ArrowResult<ArrayRef> {
+                Ok(right.column(right.schema().index_of(column_name)?).clone())
+            })
+            .collect::<ArrowResult<Vec<_>>>()?
+            .as_slice(),
+        left_cursor,
+        right_cursor,
+        last_left,
+        last_right,
+        match join_type {
+            JoinType::Inner => MergeJoinType::Inner,
+            JoinType::Left => MergeJoinType::Left,
+            JoinType::Right => MergeJoinType::Right,
+        },
+    )?;
     let columns = schema
         .fields()
         .iter()
@@ -412,7 +435,11 @@ fn merge_join(
         })
         .collect::<ArrowResult<Vec<_>>>()?;
     let batch = RecordBatch::try_new(schema, columns)?;
-    Ok((new_left_cursor, new_right_cursor, batch))
+    Ok((
+        (new_left_cursor, advance_left),
+        (new_right_cursor, advance_right),
+        batch,
+    ))
 }
 
 #[cfg(test)]
@@ -424,6 +451,7 @@ mod tests {
     };
 
     use super::*;
+    use crate::test::build_table_i32_option;
     use std::sync::Arc;
 
     fn build_table(
@@ -623,17 +651,11 @@ mod tests {
 
         let stream = join.execute(0).await?;
         let batches = common::collect(stream).await?;
-        assert_eq!(batches.len(), 2);
+        assert_eq!(batches.len(), 3);
 
-        let result = format_batch(&batches[0]);
-        let expected = vec!["1,1,7,70"];
-
-        assert_same_rows(&result, &expected);
-
-        let result = format_batch(&batches[1]);
-        let expected = vec!["2,2,8,80", "2,2,9,80"];
-
-        assert_same_rows(&result, &expected);
+        assert_same_rows(&format_batch(&batches[0]), &vec!["1,1,7,70"]);
+        assert_same_rows(&format_batch(&batches[1]), &vec![]);
+        assert_same_rows(&format_batch(&batches[2]), &vec!["2,2,8,80", "2,2,9,80"]);
 
         Ok(())
     }
@@ -751,6 +773,299 @@ mod tests {
 
         let result = format_batch(&batches[2]);
         let expected = vec!["3,6,9,40,100"];
+        assert_same_rows(&result, &expected);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn mutltiple_batches_nullable() -> Result<()> {
+        let left_1 = build_table_i32_option(
+            ("a1", &vec![None, None, Some(0), Some(1), Some(2), Some(3)]),
+            ("b1", &vec![None, None, None, Some(4), Some(5), Some(5)]),
+            ("c1", &vec![None, Some(3), None, Some(7), Some(8), Some(9)]),
+        );
+
+        let left_2 = build_table_i32_option(
+            ("a1", &vec![Some(2), Some(3)]),
+            ("b1", &vec![Some(5), Some(6)]),
+            ("c1", &vec![Some(1), Some(9)]),
+        );
+
+        let right_1 = build_table_i32_option(
+            ("a2", &vec![None, Some(10), Some(20), Some(120)]),
+            ("b1", &vec![None, Some(4), Some(5), Some(5)]),
+            ("c2", &vec![None, Some(70), Some(80), Some(180)]),
+        );
+        let right_2 = build_table_i32_option(
+            ("a2", &vec![Some(30), Some(40)]),
+            ("b1", &vec![Some(5), Some(6)]),
+            ("c2", &vec![Some(90), Some(100)]),
+        );
+        let schema_left = left_1.schema();
+        let schema = right_1.schema();
+
+        let left = Arc::new(
+            MemoryExec::try_new(&vec![vec![left_1], vec![left_2]], schema_left, None)
+                .unwrap(),
+        );
+
+        let right = Arc::new(
+            MemoryExec::try_new(&vec![vec![right_1], vec![right_2]], schema, None)
+                .unwrap(),
+        );
+
+        let on = &[("b1", "b1")];
+
+        let join = join_with_type(left, right, on, &JoinType::Left)?;
+
+        let columns = columns(&join.schema());
+        assert_eq!(columns, vec!["a1", "b1", "c1", "a2", "c2"]);
+
+        // first part
+        let stream = join.execute(0).await?;
+        let batches = common::collect(stream).await?;
+        assert_eq!(batches.len(), 3);
+
+        let result = format_batch(&batches[0]);
+        let expected = vec![
+            "NULL,NULL,NULL,NULL,NULL",
+            "NULL,NULL,3,NULL,NULL",
+            "0,NULL,NULL,NULL,NULL",
+            "1,4,7,10,70",
+        ];
+        assert_same_rows(&result, &expected);
+
+        let result = format_batch(&batches[1]);
+        let expected = vec![
+            "2,5,8,20,80",
+            "2,5,8,120,180",
+            "2,5,8,30,90",
+            "3,5,9,20,80",
+            "3,5,9,120,180",
+            "3,5,9,30,90",
+            "2,5,1,20,80",
+            "2,5,1,120,180",
+            "2,5,1,30,90",
+        ];
+        assert_same_rows(&result, &expected);
+
+        let result = format_batch(&batches[2]);
+        let expected = vec!["3,6,9,40,100"];
+        assert_same_rows(&result, &expected);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn all_nulls_multiple() -> Result<()> {
+        let left_1 = build_table_i32_option(
+            ("a1", &vec![None, None, None, None, None, None]),
+            ("b1", &vec![None, None, None, None, None, None]),
+            ("c1", &vec![None, None, None, None, None, None]),
+        );
+
+        let left_2 = build_table_i32_option(
+            ("a1", &vec![None, None]),
+            ("b1", &vec![None, None]),
+            ("c1", &vec![None, None]),
+        );
+
+        let right_1 = build_table_i32_option(
+            ("a2", &vec![None, None, None, None, None]),
+            ("b1", &vec![None, None, None, None, None]),
+            ("c2", &vec![None, None, None, None, None]),
+        );
+        let right_2 = build_table_i32_option(
+            ("a2", &vec![None, None, None]),
+            ("b1", &vec![None, None, None]),
+            ("c2", &vec![None, None, None]),
+        );
+        let schema_left = left_1.schema();
+        let schema = right_1.schema();
+
+        let left = Arc::new(
+            MemoryExec::try_new(&vec![vec![left_1], vec![left_2]], schema_left, None)
+                .unwrap(),
+        );
+
+        let right = Arc::new(
+            MemoryExec::try_new(&vec![vec![right_1], vec![right_2]], schema, None)
+                .unwrap(),
+        );
+
+        let on = &[("b1", "b1")];
+
+        let join = join_with_type(left, right, on, &JoinType::Left)?;
+
+        let columns = columns(&join.schema());
+        assert_eq!(columns, vec!["a1", "b1", "c1", "a2", "c2"]);
+
+        // first part
+        let stream = join.execute(0).await?;
+        let batches = common::collect(stream).await?;
+        assert_eq!(batches.len(), 2);
+
+        let result = format_batch(&batches[0]);
+        let expected = vec![
+            "NULL,NULL,NULL,NULL,NULL",
+            "NULL,NULL,NULL,NULL,NULL",
+            "NULL,NULL,NULL,NULL,NULL",
+            "NULL,NULL,NULL,NULL,NULL",
+            "NULL,NULL,NULL,NULL,NULL",
+            "NULL,NULL,NULL,NULL,NULL",
+        ];
+        assert_same_rows(&result, &expected);
+
+        let result = format_batch(&batches[1]);
+        let expected = vec!["NULL,NULL,NULL,NULL,NULL", "NULL,NULL,NULL,NULL,NULL"];
+        assert_same_rows(&result, &expected);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn multiple_remainders() -> Result<()> {
+        let left_1 = build_table_i32_option(
+            ("a1", &vec![None, None, Some(0), Some(1), Some(2), Some(3)]),
+            ("b1", &vec![None, None, None, Some(4), Some(5), Some(5)]),
+            ("c1", &vec![None, Some(3), None, Some(7), Some(8), Some(9)]),
+        );
+
+        let left_2 = build_table_i32_option(
+            ("a1", &vec![Some(2), Some(3)]),
+            ("b1", &vec![Some(5), Some(6)]),
+            ("c1", &vec![Some(1), Some(9)]),
+        );
+
+        let right_1 = build_table_i32_option(
+            ("a2", &vec![None, Some(10), Some(11), Some(12)]),
+            ("b1", &vec![None, Some(4), Some(5), Some(5)]),
+            ("c2", &vec![None, Some(70), Some(111), Some(112)]),
+        );
+
+        let right_2 = build_table_i32_option(
+            ("a2", &vec![Some(21), Some(22)]),
+            ("b1", &vec![Some(5), Some(5)]),
+            ("c2", &vec![Some(121), Some(122)]),
+        );
+
+        let right_3 = build_table_i32_option(
+            ("a2", &vec![Some(31), Some(32), Some(33)]),
+            ("b1", &vec![Some(5), Some(5), Some(5)]),
+            ("c2", &vec![Some(131), Some(132), Some(133)]),
+        );
+
+        let right_4 = build_table_i32_option(
+            ("a2", &vec![Some(41), Some(42), Some(43), Some(44)]),
+            ("b1", &vec![Some(5), Some(5), Some(5), Some(5)]),
+            ("c2", &vec![Some(141), Some(142), Some(143), Some(144)]),
+        );
+
+        let right_5 = build_table_i32_option(
+            ("a2", &vec![Some(51), Some(52)]),
+            ("b1", &vec![Some(5), Some(6)]),
+            ("c2", &vec![Some(151), Some(152)]),
+        );
+        let schema_left = left_1.schema();
+        let schema = right_1.schema();
+
+        let left = Arc::new(
+            MemoryExec::try_new(&vec![vec![left_1], vec![left_2]], schema_left, None)
+                .unwrap(),
+        );
+
+        let right = Arc::new(
+            MemoryExec::try_new(
+                &vec![
+                    vec![right_1],
+                    vec![right_2],
+                    vec![right_3],
+                    vec![right_4],
+                    vec![right_5],
+                ],
+                schema,
+                None,
+            )
+            .unwrap(),
+        );
+
+        let on = &[("b1", "b1")];
+
+        let join = join_with_type(left, right, on, &JoinType::Left)?;
+
+        let columns = columns(&join.schema());
+        assert_eq!(columns, vec!["a1", "b1", "c1", "a2", "c2"]);
+
+        // first part
+        let stream = join.execute(0).await?;
+        let batches = common::collect(stream).await?;
+        assert_eq!(batches.len(), 6);
+
+        let result = format_batch(&batches[0]);
+        let expected = vec![
+            "NULL,NULL,NULL,NULL,NULL",
+            "NULL,NULL,3,NULL,NULL",
+            "0,NULL,NULL,NULL,NULL",
+            "1,4,7,10,70",
+        ];
+        assert_same_rows(&result, &expected);
+
+        let result = format_batch(&batches[1]);
+        let expected = vec![];
+        assert_same_rows(&result, &expected);
+
+        let result = format_batch(&batches[2]);
+        let expected = vec![];
+        assert_same_rows(&result, &expected);
+
+        let result = format_batch(&batches[3]);
+        let expected = vec![];
+        assert_same_rows(&result, &expected);
+
+        let result = format_batch(&batches[4]);
+        let expected = vec![
+            "2,5,8,11,111",
+            "2,5,8,12,112",
+            "2,5,8,21,121",
+            "2,5,8,22,122",
+            "2,5,8,31,131",
+            "2,5,8,32,132",
+            "2,5,8,33,133",
+            "2,5,8,41,141",
+            "2,5,8,42,142",
+            "2,5,8,43,143",
+            "2,5,8,44,144",
+            "2,5,8,51,151",
+            "3,5,9,11,111",
+            "3,5,9,12,112",
+            "3,5,9,21,121",
+            "3,5,9,22,122",
+            "3,5,9,31,131",
+            "3,5,9,32,132",
+            "3,5,9,33,133",
+            "3,5,9,41,141",
+            "3,5,9,42,142",
+            "3,5,9,43,143",
+            "3,5,9,44,144",
+            "3,5,9,51,151",
+            "2,5,1,11,111",
+            "2,5,1,12,112",
+            "2,5,1,21,121",
+            "2,5,1,22,122",
+            "2,5,1,31,131",
+            "2,5,1,32,132",
+            "2,5,1,33,133",
+            "2,5,1,41,141",
+            "2,5,1,42,142",
+            "2,5,1,43,143",
+            "2,5,1,44,144",
+            "2,5,1,51,151",
+        ];
+        assert_same_rows(&result, &expected);
+
+        let result = format_batch(&batches[5]);
+        let expected = vec!["3,6,9,52,152"];
         assert_same_rows(&result, &expected);
 
         Ok(())
