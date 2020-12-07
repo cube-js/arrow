@@ -190,6 +190,7 @@ impl<'a> Iterator for SlicesIterator<'a> {
 /// WARNING: the nulls of `filter` are ignored and the value on its slot is considered.
 /// Therefore, it is considered undefined behavior to pass `filter` with null values.
 pub fn build_filter(filter: &BooleanArray) -> Result<Filter> {
+    // TODO check null values init bug
     let iter = SlicesIterator::new(filter);
     let filter_count = iter.filter_count;
     let chunks = iter.collect::<Vec<_>>();
@@ -221,6 +222,7 @@ pub fn build_filter(filter: &BooleanArray) -> Result<Filter> {
 /// # }
 /// ```
 pub fn filter(array: &Array, filter: &BooleanArray) -> Result<ArrayRef> {
+    // TODO check null values init bug
     let iter = SlicesIterator::new(filter);
 
     let mut mutable =
