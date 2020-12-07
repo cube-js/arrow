@@ -1708,17 +1708,17 @@ pub fn numerical_coercion(lhs_type: &DataType, rhs_type: &DataType) -> Option<Da
     // these are ordered from most informative to least informative so
     // that the coercion removes the least amount of information
     match (lhs_type, rhs_type) {
-        (Float64, _) => Some(Float64),
-        (_, Float64) => Some(Float64),
-
-        (_, Float32) => Some(Float32),
-        (Float32, _) => Some(Float32),
-
         (Int64Decimal(scale_a), Int64Decimal(scale_b)) => {
             Some(Int64Decimal(std::cmp::max(*scale_a, *scale_b)))
         }
         (_, Int64Decimal(scale)) => Some(Int64Decimal(*scale)),
         (Int64Decimal(scale), _) => Some(Int64Decimal(*scale)),
+
+        (Float64, _) => Some(Float64),
+        (_, Float64) => Some(Float64),
+
+        (_, Float32) => Some(Float32),
+        (Float32, _) => Some(Float32),
 
         (Int64, _) => Some(Int64),
         (_, Int64) => Some(Int64),
