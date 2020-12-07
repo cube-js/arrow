@@ -653,9 +653,9 @@ mod tests {
         let batches = common::collect(stream).await?;
         assert_eq!(batches.len(), 3);
 
-        assert_same_rows(&format_batch(&batches[0]), &vec!["1,1,7,70"]);
-        assert_same_rows(&format_batch(&batches[1]), &vec![]);
-        assert_same_rows(&format_batch(&batches[2]), &vec!["2,2,8,80", "2,2,9,80"]);
+        assert_same_rows(&format_batch(&batches[0]), &["1,1,7,70"]);
+        assert_same_rows(&format_batch(&batches[1]), &[]);
+        assert_same_rows(&format_batch(&batches[2]), &["2,2,8,80", "2,2,9,80"]);
 
         Ok(())
     }
