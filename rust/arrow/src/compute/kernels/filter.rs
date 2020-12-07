@@ -18,6 +18,7 @@
 //! Defines miscellaneous array kernels.
 
 use crate::array::*;
+use crate::buffer::buffer_bin_and;
 use crate::datatypes::*;
 use crate::error::{ArrowError, Result};
 use crate::record_batch::RecordBatch;
@@ -322,7 +323,17 @@ impl FilterContext {
         let filter_buffer = &filter_array.data_ref().buffers()[0];
         let filtered_count = filter_buffer.count_set_bits_offset(0, filter_array.len());
 
-        let filter_bytes = filter_buffer.data();
+        let combined_buffer = filter_array.data_ref().null_buffer().map(|null_buffer| {
+            buffer_bin_and(
+                &filter_buffer,
+                filter_array.data_ref().offset(),
+                null_buffer,
+                filter_array.data_ref().offset(),
+                filter_array.len(),
+            )
+        });
+
+        let filter_bytes = combined_buffer.as_ref().unwrap_or(filter_buffer).data();
 
         // add to the resulting len so is is a multiple of the size of u64
         let pad_addional_len = 8 - filter_bytes.len() % 8;
