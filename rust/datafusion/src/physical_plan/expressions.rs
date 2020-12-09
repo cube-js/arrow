@@ -1769,6 +1769,70 @@ pub fn numerical_coercion(lhs_type: &DataType, rhs_type: &DataType) -> Option<Da
     }
 }
 
+/// String implicit casts
+#[allow(clippy::nonminimal_bool)]
+pub fn string_implicit_cast(
+    lhs_type: &DataType,
+    rhs_type: &DataType,
+) -> Option<DataType> {
+    use arrow::datatypes::DataType::*;
+
+    if !(lhs_type != &DataType::Utf8 && rhs_type == &DataType::Utf8
+        || lhs_type == &DataType::Utf8 && rhs_type != &DataType::Utf8)
+    {
+        return None;
+    };
+
+    // these are ordered from most informative to least informative so
+    // that the coercion removes the least amount of information
+    match (lhs_type, rhs_type) {
+        (_, Int64Decimal(scale)) => Some(Int64Decimal(*scale)),
+        (Int64Decimal(scale), _) => Some(Int64Decimal(*scale)),
+
+        (Float64, _) => Some(Float64),
+        (_, Float64) => Some(Float64),
+
+        (_, Float32) => Some(Float32),
+        (Float32, _) => Some(Float32),
+
+        (Int64, _) => Some(Int64),
+        (_, Int64) => Some(Int64),
+
+        (Int32, _) => Some(Int32),
+        (_, Int32) => Some(Int32),
+
+        (Int16, _) => Some(Int16),
+        (_, Int16) => Some(Int16),
+
+        (Int8, _) => Some(Int8),
+        (_, Int8) => Some(Int8),
+
+        (UInt64, _) => Some(UInt64),
+        (_, UInt64) => Some(UInt64),
+
+        (UInt32, _) => Some(UInt32),
+        (_, UInt32) => Some(UInt32),
+
+        (UInt16, _) => Some(UInt16),
+        (_, UInt16) => Some(UInt16),
+
+        (UInt8, _) => Some(UInt8),
+        (_, UInt8) => Some(UInt8),
+
+        (Timestamp(TimeUnit::Nanosecond, None), _) => {
+            Some(Timestamp(TimeUnit::Nanosecond, None))
+        }
+        (_, Timestamp(TimeUnit::Nanosecond, None)) => {
+            Some(Timestamp(TimeUnit::Nanosecond, None))
+        }
+
+        (Boolean, _) => Some(Boolean),
+        (_, Boolean) => Some(Boolean),
+
+        _ => None,
+    }
+}
+
 // coercion rules for equality operations. This is a superset of all numerical coercion rules.
 fn eq_coercion(lhs_type: &DataType, rhs_type: &DataType) -> Option<DataType> {
     if lhs_type == rhs_type {
@@ -1777,6 +1841,7 @@ fn eq_coercion(lhs_type: &DataType, rhs_type: &DataType) -> Option<DataType> {
     }
     numerical_coercion(lhs_type, rhs_type)
         .or_else(|| dictionary_coercion(lhs_type, rhs_type))
+        .or_else(|| string_implicit_cast(lhs_type, rhs_type))
 }
 
 // coercion rules that assume an ordered set, such as "less than".
@@ -1790,6 +1855,7 @@ fn order_coercion(lhs_type: &DataType, rhs_type: &DataType) -> Option<DataType> 
     numerical_coercion(lhs_type, rhs_type)
         .or_else(|| string_coercion(lhs_type, rhs_type))
         .or_else(|| dictionary_coercion(lhs_type, rhs_type))
+        .or_else(|| string_implicit_cast(lhs_type, rhs_type))
 }
 
 /// Coercion rules for all binary operators. Returns the output type
@@ -1817,8 +1883,10 @@ fn common_binary_type(
         // for math expressions, the final value of the coercion is also the return type
         // because coercion favours higher information types
         Operator::Divide | Operator::Multiply => multi_div_conversion(lhs_type, rhs_type)
-            .or(numerical_coercion(lhs_type, rhs_type)),
-        Operator::Plus | Operator::Minus => numerical_coercion(lhs_type, rhs_type),
+            .or(numerical_coercion(lhs_type, rhs_type))
+            .or_else(|| string_implicit_cast(lhs_type, rhs_type)),
+        Operator::Plus | Operator::Minus => numerical_coercion(lhs_type, rhs_type)
+            .or_else(|| string_implicit_cast(lhs_type, rhs_type)),
         Operator::Modulus => {
             return Err(DataFusionError::NotImplemented(
                 "Modulus operator is still not supported".to_string(),
@@ -3332,6 +3400,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Cube Store coerces strings to numerics"]
     fn test_coersion_error() -> Result<()> {
         let expr =
             common_binary_type(&DataType::Float32, &Operator::Plus, &DataType::Utf8);
