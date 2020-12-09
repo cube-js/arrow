@@ -914,21 +914,13 @@ impl<'a, S: ContextProvider> SqlToRel<'a, S> {
                     .iter()
                     .map(|right| -> Result<_> {
                         Ok(Expr::BinaryExpr {
-                            left: Box::new(self.sql_to_rex(
-                                &expr,
-                                &schema,
-                                aliased_schema,
-                            )?),
+                            left: Box::new(self.sql_expr_to_logical_expr(&expr)?),
                             op: Operator::Eq,
-                            right: Box::new(self.sql_to_rex(
-                                &right,
-                                &schema,
-                                aliased_schema,
-                            )?),
+                            right: Box::new(self.sql_expr_to_logical_expr(&right)?),
                         })
                     })
                     .collect::<Result<Vec<_>>>()?;
-                let result = if items.len() == 0 {
+                let result = if items.is_empty() {
                     lit(false)
                 } else if items.len() == 1 {
                     items.into_iter().next().unwrap()

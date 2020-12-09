@@ -873,6 +873,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Cube Store coerces strings to numerics"]
     fn errors() -> Result<()> {
         let testdata = arrow::util::test_util::arrow_test_data();
         let path = format!("{}/csv/aggregate_test_100.csv", testdata);
