@@ -254,6 +254,7 @@ impl<W: 'static + ParquetWriter> FileWriter for SerializedFileWriter<W> {
         self.assert_closed()?;
         self.assert_previous_writer_closed()?;
         self.write_metadata()?;
+        self.buf.flush()?;
         self.is_closed = true;
         Ok(())
     }
