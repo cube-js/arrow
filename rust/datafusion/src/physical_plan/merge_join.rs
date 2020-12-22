@@ -600,7 +600,7 @@ mod tests {
 
         assert_same_rows(
             &format_batch(&batches[0]),
-            &vec!["1,1,7,70", "2,2,8,80", "2,2,9,80", "3,3,2,NULL"],
+            &["1,1,7,70", "2,2,8,80", "2,2,9,80", "3,3,2,NULL"],
         );
         assert_same_rows(&format_batch(&batches[1]), &vec![]);
 
@@ -881,11 +881,11 @@ mod tests {
         let batches = common::collect(stream).await?;
         assert_eq!(batches.len(), 3);
 
-        assert_same_rows(&format_batch(&batches[0]), &vec![]);
+        assert_same_rows(&format_batch(&batches[0]), &[]);
 
         assert_same_rows(
             &format_batch(&batches[1]),
-            &vec![
+            &[
                 "NULL,NULL,NULL,NULL,NULL",
                 "NULL,NULL,3,NULL,NULL",
                 "0,NULL,NULL,NULL,NULL",
@@ -897,7 +897,7 @@ mod tests {
 
         assert_same_rows(
             &format_batch(&batches[2]),
-            &vec!["2,5,1,NULL,NULL", "3,6,9,NULL,NULL"],
+            &["2,5,1,NULL,NULL", "3,6,9,NULL,NULL"],
         );
 
         Ok(())
@@ -972,11 +972,11 @@ mod tests {
         let batches = common::collect(stream).await?;
         assert_eq!(batches.len(), 3);
 
-        assert_same_rows(&format_batch(&batches[0]), &vec![]);
+        assert_same_rows(&format_batch(&batches[0]), &[]);
 
         assert_same_rows(
             &format_batch(&batches[1]),
-            &vec![
+            &[
                 "NULL,NULL,NULL,NULL,NULL",
                 "NULL,NULL,3,NULL,NULL",
                 "0,NULL,NULL,NULL,NULL",
@@ -988,7 +988,7 @@ mod tests {
 
         assert_same_rows(
             &format_batch(&batches[2]),
-            &vec!["2,5,1,NULL,NULL", "3,6,9,NULL,NULL"],
+            &["2,5,1,NULL,NULL", "3,6,9,NULL,NULL"],
         );
 
         Ok(())
