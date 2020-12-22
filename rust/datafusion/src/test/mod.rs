@@ -20,7 +20,7 @@
 use crate::datasource::{MemTable, TableProvider};
 use crate::error::Result;
 use crate::logical_plan::{DFSchema, LogicalPlan, LogicalPlanBuilder};
-use arrow::array::{self, Int32Array};
+use arrow::array::{self, Int32Array, StringArray};
 use arrow::datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit};
 use arrow::record_batch::RecordBatch;
 use std::fs::File;
@@ -296,6 +296,40 @@ pub fn build_table_i32_option(
             Arc::new(Int32Array::from(a.1.clone())),
             Arc::new(Int32Array::from(b.1.clone())),
             Arc::new(Int32Array::from(c.1.clone())),
+        ],
+    )
+    .unwrap()
+}
+
+pub fn build_table_string_option(
+    a: (&str, &Vec<Option<String>>),
+    b: (&str, &Vec<Option<String>>),
+    c: (&str, &Vec<Option<String>>),
+) -> RecordBatch {
+    let schema = Schema::new(vec![
+        Field::new(a.0, DataType::Utf8, false),
+        Field::new(b.0, DataType::Utf8, false),
+        Field::new(c.0, DataType::Utf8, false),
+    ]);
+
+    RecordBatch::try_new(
+        Arc::new(schema),
+        vec![
+            Arc::new(StringArray::from(
+                a.1.iter()
+                    .map(|o| o.as_ref().map(|o| o.as_str()))
+                    .collect::<Vec<Option<&str>>>(),
+            )),
+            Arc::new(StringArray::from(
+                b.1.iter()
+                    .map(|o| o.as_ref().map(|o| o.as_str()))
+                    .collect::<Vec<Option<&str>>>(),
+            )),
+            Arc::new(StringArray::from(
+                c.1.iter()
+                    .map(|o| o.as_ref().map(|o| o.as_str()))
+                    .collect::<Vec<Option<&str>>>(),
+            )),
         ],
     )
     .unwrap()
