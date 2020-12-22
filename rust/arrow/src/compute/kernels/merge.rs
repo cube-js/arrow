@@ -132,6 +132,26 @@ pub fn merge_join_indices<'a>(
         }
     }
 
+    if last_right {
+        while left_merge_cursor.within_range() {
+            if let MergeJoinType::Left = join_type {
+                left_indices.push(Some(left_merge_cursor.row_index as u32));
+                right_indices.push(None);
+            }
+            left_merge_cursor = left_merge_cursor.next();
+        }
+    }
+
+    if last_left {
+        while right_merge_cursor.within_range() {
+            if let MergeJoinType::Right = join_type {
+                left_indices.push(None);
+                right_indices.push(Some(right_merge_cursor.row_index as u32));
+            }
+            right_merge_cursor = right_merge_cursor.next();
+        }
+    }
+
     let left_indices_array = UInt32Array::from(left_indices);
     let right_indices_array = UInt32Array::from(right_indices);
 
@@ -822,6 +842,63 @@ mod tests {
                         Some(4),
                         Some(5),
                         Some(5)
+                    ]))
+                )
+            )
+        )
+    }
+
+    #[test]
+    fn merge_left_join_empty() {
+        let array_left: ArrayRef = Arc::new(UInt64Array::from(vec![
+            None,
+            None,
+            None,
+            None,
+            Some(4),
+            Some(8),
+            Some(9),
+            Some(15),
+            Some(15),
+        ]));
+        let array_right: ArrayRef = Arc::new(UInt64Array::from(Vec::<u64>::new()));
+        let vec_left = vec![array_left];
+        let vec_right = vec![array_right];
+
+        let result = merge_join_indices(
+            vec_left.as_slice(),
+            vec_right.as_slice(),
+            0,
+            0,
+            true,
+            true,
+            MergeJoinType::Left,
+        )
+        .unwrap();
+
+        assert_eq!(
+            result,
+            (
+                (
+                    9usize,
+                    false,
+                    Arc::new(UInt32Array::from(vec![
+                        Some(0),
+                        Some(1),
+                        Some(2),
+                        Some(3),
+                        Some(4),
+                        Some(5),
+                        Some(6),
+                        Some(7),
+                        Some(8)
+                    ]))
+                ),
+                (
+                    0,
+                    false,
+                    Arc::new(UInt32Array::from(vec![
+                        None, None, None, None, None, None, None, None, None,
                     ]))
                 )
             )

@@ -36,6 +36,7 @@ use super::{
 use crate::error::{DataFusionError, Result};
 
 use super::{ExecutionPlan, Partitioning, RecordBatchStream, SendableRecordBatchStream};
+use crate::physical_plan::common::create_batch_empty;
 use arrow::compute::kernels::merge::{merge_join_indices, MergeJoinType};
 use arrow::compute::{concat, take};
 use std::task::Poll;
@@ -220,8 +221,6 @@ impl MergeJoinStreamState {
                         self.is_last = true;
                         if self.to_concat.is_some() {
                             self.current = self.to_concat.take();
-                        } else {
-                            return Some(Poll::Ready(None));
                         }
                     }
                 }
@@ -230,6 +229,10 @@ impl MergeJoinStreamState {
             }
         }
         None
+    }
+
+    pub fn empty_batch(&self) -> ArrowResult<RecordBatch> {
+        create_batch_empty(self.stream.schema().as_ref())
     }
 }
 
@@ -247,95 +250,75 @@ impl Stream for MergeJoinStream {
             return r;
         }
 
-        match (self.left.current.clone(), self.right.current.clone()) {
-            (Some((left_cursor, left)), Some((right_cursor, right))) => {
-                let merge_result = merge_join(
-                    self.schema.clone(),
-                    &left,
-                    &right,
-                    &self.on_left,
-                    &self.on_right,
-                    self.left.is_last,
-                    self.right.is_last,
-                    left_cursor,
-                    right_cursor,
-                    &self.join_type,
-                );
-                Poll::Ready(Some(merge_result.map(
-                    |(
-                        (new_left_cursor, advance_left),
-                        (new_right_cursor, advance_right),
-                        batch,
-                    )| {
-                        if advance_left {
-                            if new_left_cursor < left.num_rows() {
-                                self.left.to_concat = Some((new_left_cursor, left));
-                                self.left.current = None;
-                            } else {
-                                panic!("Unexpected advance_left state");
-                            }
-                        } else {
-                            if new_left_cursor == left.num_rows() {
-                                self.left.current = None;
-                            } else {
-                                self.left.current = Some((new_left_cursor, left));
-                            }
-                        }
+        let left_state = self.left.current.clone();
+        let right_state = self.right.current.clone();
 
-                        if advance_right {
-                            if new_right_cursor < right.num_rows() {
-                                self.right.to_concat = Some((new_right_cursor, right));
-                                self.right.current = None;
-                            } else {
-                                panic!("Unexpected advance_right state");
-                            }
-                        } else {
-                            if new_right_cursor == right.num_rows() {
-                                self.right.current = None;
-                            } else {
-                                self.right.current = Some((new_right_cursor, right));
-                            }
-                        }
-                        batch
-                    },
-                )))
-            }
-            (None, Some(_)) => {
-                if self.left.is_last {
-                    loop {
-                        self.right.current = None;
-                        if let Some(r) = self.right.update_state(cx) {
-                            return r;
-                        }
-                        if self.right.current.is_none() && self.right.is_last {
-                            return Poll::Ready(None);
-                        }
-                    }
-                }
-                Poll::Pending
-            }
-            (Some(_), None) => {
-                if self.right.is_last {
-                    loop {
-                        self.left.current = None;
-                        if let Some(r) = self.left.update_state(cx) {
-                            return r;
-                        }
-                        if self.left.current.is_none() && self.left.is_last {
-                            return Poll::Ready(None);
-                        }
-                    }
-                }
-                Poll::Pending
-            }
-            (None, None) => {
-                if self.left.is_last && self.right.is_last {
-                    Poll::Ready(None)
-                } else {
-                    Poll::Pending
-                }
-            }
+        if left_state.is_none()
+            && right_state.is_none()
+            && self.left.is_last
+            && self.right.is_last
+        {
+            return Poll::Ready(None);
         }
+
+        let left_cursor = left_state.as_ref().map(|(cursor, _)| *cursor).unwrap_or(0);
+        let right_cursor = right_state.as_ref().map(|(cursor, _)| *cursor).unwrap_or(0);
+        let left = left_state
+            .map(|(_, batch)| Ok(batch))
+            .unwrap_or_else(|| self.left.empty_batch())?;
+        let right = right_state
+            .map(|(_, batch)| Ok(batch))
+            .unwrap_or_else(|| self.right.empty_batch())?;
+        let merge_result = merge_join(
+            self.schema.clone(),
+            &left,
+            &right,
+            &self.on_left,
+            &self.on_right,
+            self.left.is_last,
+            self.right.is_last,
+            left_cursor,
+            right_cursor,
+            &self.join_type,
+        );
+        Poll::Ready(Some(merge_result.map(
+            |(
+                (new_left_cursor, advance_left),
+                (new_right_cursor, advance_right),
+                batch,
+            )| {
+                if advance_left {
+                    if new_left_cursor < left.num_rows() {
+                        self.left.to_concat = Some((new_left_cursor, left));
+                        self.left.current = None;
+                    } else {
+                        panic!("Unexpected advance_left state");
+                    }
+                } else {
+                    if new_left_cursor == left.num_rows() {
+                        self.left.current = None;
+                    } else {
+                        self.left.current = Some((new_left_cursor, left));
+                    }
+                }
+
+                if advance_right {
+                    if new_right_cursor < right.num_rows() {
+                        self.right.to_concat = Some((new_right_cursor, right));
+                        self.right.current = None;
+                    } else {
+                        panic!("Unexpected advance_right state");
+                    }
+                } else {
+                    if new_right_cursor == right.num_rows() {
+                        self.right.current = None;
+                    } else {
+                        self.right.current = Some((new_right_cursor, right));
+                    }
+                }
+                batch
+            },
+        )))
     }
 }
 
@@ -451,7 +434,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::test::build_table_i32_option;
+    use crate::test::{build_table_i32_option, build_table_string_option};
     use std::sync::Arc;
 
     fn build_table(
@@ -613,11 +596,13 @@ mod tests {
 
         let stream = join.execute(0).await?;
         let batches = common::collect(stream).await?;
-        assert_eq!(batches.len(), 1);
+        assert_eq!(batches.len(), 2);
 
-        let result = format_batch(&batches[0]);
-        let expected = vec!["1,1,7,70", "2,2,8,80", "2,2,9,80", "3,3,2,NULL"];
-        assert_same_rows(&result, &expected);
+        assert_same_rows(
+            &format_batch(&batches[0]),
+            &vec!["1,1,7,70", "2,2,8,80", "2,2,9,80", "3,3,2,NULL"],
+        );
+        assert_same_rows(&format_batch(&batches[1]), &vec![]);
 
         Ok(())
     }
@@ -853,6 +838,158 @@ mod tests {
         let result = format_batch(&batches[2]);
         let expected = vec!["3,6,9,40,100"];
         assert_same_rows(&result, &expected);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn empty_right() -> Result<()> {
+        let left_1 = build_table_i32_option(
+            ("a1", &vec![None, None, Some(0), Some(1), Some(2), Some(3)]),
+            ("b1", &vec![None, None, None, Some(4), Some(5), Some(5)]),
+            ("c1", &vec![None, Some(3), None, Some(7), Some(8), Some(9)]),
+        );
+
+        let left_2 = build_table_i32_option(
+            ("a1", &vec![Some(2), Some(3)]),
+            ("b1", &vec![Some(5), Some(6)]),
+            ("c1", &vec![Some(1), Some(9)]),
+        );
+
+        let right_1 =
+            build_table_i32_option(("a2", &vec![]), ("b1", &vec![]), ("c2", &vec![]));
+        let schema_left = left_1.schema();
+        let schema = right_1.schema();
+
+        let left = Arc::new(
+            MemoryExec::try_new(&vec![vec![left_1], vec![left_2]], schema_left, None)
+                .unwrap(),
+        );
+
+        let right =
+            Arc::new(MemoryExec::try_new(&vec![vec![right_1]], schema, None).unwrap());
+
+        let on = &[("b1", "b1")];
+
+        let join = join_with_type(left, right, on, &JoinType::Left)?;
+
+        let columns = columns(&join.schema());
+        assert_eq!(columns, vec!["a1", "b1", "c1", "a2", "c2"]);
+
+        // first part
+        let stream = join.execute(0).await?;
+        let batches = common::collect(stream).await?;
+        assert_eq!(batches.len(), 3);
+
+        assert_same_rows(&format_batch(&batches[0]), &vec![]);
+
+        assert_same_rows(
+            &format_batch(&batches[1]),
+            &vec![
+                "NULL,NULL,NULL,NULL,NULL",
+                "NULL,NULL,3,NULL,NULL",
+                "0,NULL,NULL,NULL,NULL",
+                "1,4,7,NULL,NULL",
+                "2,5,8,NULL,NULL",
+                "3,5,9,NULL,NULL",
+            ],
+        );
+
+        assert_same_rows(
+            &format_batch(&batches[2]),
+            &vec!["2,5,1,NULL,NULL", "3,6,9,NULL,NULL"],
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn empty_right_string() -> Result<()> {
+        let left_1 = build_table_string_option(
+            (
+                "a1",
+                &vec![
+                    None,
+                    None,
+                    Some("0".to_string()),
+                    Some("1".to_string()),
+                    Some("2".to_string()),
+                    Some("3".to_string()),
+                ],
+            ),
+            (
+                "b1",
+                &vec![
+                    None,
+                    None,
+                    None,
+                    Some("4".to_string()),
+                    Some("5".to_string()),
+                    Some("5".to_string()),
+                ],
+            ),
+            (
+                "c1",
+                &vec![
+                    None,
+                    Some("3".to_string()),
+                    None,
+                    Some("7".to_string()),
+                    Some("8".to_string()),
+                    Some("9".to_string()),
+                ],
+            ),
+        );
+
+        let left_2 = build_table_string_option(
+            ("a1", &vec![Some("2".to_string()), Some("3".to_string())]),
+            ("b1", &vec![Some("5".to_string()), Some("6".to_string())]),
+            ("c1", &vec![Some("1".to_string()), Some("9".to_string())]),
+        );
+
+        let right_1 =
+            build_table_string_option(("a2", &vec![]), ("b1", &vec![]), ("c2", &vec![]));
+        let schema_left = left_1.schema();
+        let schema = right_1.schema();
+
+        let left = Arc::new(
+            MemoryExec::try_new(&vec![vec![left_1], vec![left_2]], schema_left, None)
+                .unwrap(),
+        );
+
+        let right =
+            Arc::new(MemoryExec::try_new(&vec![vec![right_1]], schema, None).unwrap());
+
+        let on = &[("b1", "b1")];
+
+        let join = join_with_type(left, right, on, &JoinType::Left)?;
+
+        let columns = columns(&join.schema());
+        assert_eq!(columns, vec!["a1", "b1", "c1", "a2", "c2"]);
+
+        // first part
+        let stream = join.execute(0).await?;
+        let batches = common::collect(stream).await?;
+        assert_eq!(batches.len(), 3);
+
+        assert_same_rows(&format_batch(&batches[0]), &vec![]);
+
+        assert_same_rows(
+            &format_batch(&batches[1]),
+            &vec![
+                "NULL,NULL,NULL,NULL,NULL",
+                "NULL,NULL,3,NULL,NULL",
+                "0,NULL,NULL,NULL,NULL",
+                "1,4,7,NULL,NULL",
+                "2,5,8,NULL,NULL",
+                "3,5,9,NULL,NULL",
+            ],
+        );
+
+        assert_same_rows(
+            &format_batch(&batches[2]),
+            &vec!["2,5,1,NULL,NULL", "3,6,9,NULL,NULL"],
+        );
 
         Ok(())
     }

@@ -243,7 +243,7 @@ where
 
     let nulls;
 
-    if null_count == 0 {
+    if null_count == 0 && indices.null_count() == 0 {
         // Take indices without null checking
         for (i, elem) in data.iter_mut().enumerate() {
             let index = ToPrimitive::to_usize(&indices.value(i)).ok_or_else(|| {
@@ -260,15 +260,18 @@ where
         let null_slice = null_buf.data_mut();
 
         for (i, elem) in data.iter_mut().enumerate() {
-            let index = ToPrimitive::to_usize(&indices.value(i)).ok_or_else(|| {
-                ArrowError::ComputeError("Cast to usize failed".to_string())
-            })?;
+            if indices.is_valid(i) {
+                let index =
+                    ToPrimitive::to_usize(&indices.value(i)).ok_or_else(|| {
+                        ArrowError::ComputeError("Cast to usize failed".to_string())
+                    })?;
 
-            if array.is_null(index) {
-                bit_util::unset_bit(null_slice, i);
+                if array.is_null(index) {
+                    bit_util::unset_bit(null_slice, i);
+                }
+
+                *elem = array.value(index);
             }
-
-            *elem = array.value(index);
         }
         nulls = match indices.data_ref().null_buffer() {
             Some(buffer) => Some(buffer_bin_and(
@@ -315,7 +318,7 @@ where
     let null_count = array.null_count();
 
     let nulls;
-    if null_count == 0 {
+    if null_count == 0 && indices.null_count() == 0 {
         (0..data_len).try_for_each::<_, Result<()>>(|i| {
             let index = ToPrimitive::to_usize(&indices.value(i)).ok_or_else(|| {
                 ArrowError::ComputeError("Cast to usize failed".to_string())
@@ -334,14 +337,17 @@ where
         let null_slice = null_buf.data_mut();
 
         (0..data_len).try_for_each::<_, Result<()>>(|i| {
-            let index = ToPrimitive::to_usize(&indices.value(i)).ok_or_else(|| {
-                ArrowError::ComputeError("Cast to usize failed".to_string())
-            })?;
+            if indices.is_valid(i) {
+                let index =
+                    ToPrimitive::to_usize(&indices.value(i)).ok_or_else(|| {
+                        ArrowError::ComputeError("Cast to usize failed".to_string())
+                    })?;
 
-            if array.is_null(index) {
-                bit_util::unset_bit(null_slice, i);
-            } else if array.value(index) {
-                bit_util::set_bit(val_slice, i);
+                if array.is_null(index) {
+                    bit_util::unset_bit(null_slice, i);
+                } else if array.value(index) {
+                    bit_util::set_bit(val_slice, i);
+                }
             }
 
             Ok(())
