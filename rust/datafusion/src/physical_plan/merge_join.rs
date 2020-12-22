@@ -604,7 +604,7 @@ mod tests {
             &format_batch(&batches[0]),
             &["1,1,7,70", "2,2,8,80", "2,2,9,80", "3,3,2,NULL"],
         );
-        assert_same_rows(&format_batch(&batches[1]), &vec![]);
+        assert_same_rows(&format_batch(&batches[1]), &[]);
 
         Ok(())
     }
