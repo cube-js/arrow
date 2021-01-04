@@ -96,12 +96,12 @@ fn get_join_predicates<'a>(
     let left_columns = &left
         .fields()
         .iter()
-        .map(|f| f.name().clone())
+        .map(|f| f.qualified_name())
         .collect::<HashSet<_>>();
     let right_columns = &right
         .fields()
         .iter()
-        .map(|f| f.name().clone())
+        .map(|f| f.qualified_name())
         .collect::<HashSet<_>>();
 
     let filters = state
@@ -264,7 +264,7 @@ fn optimize(plan: &LogicalPlan, mut state: State) -> Result<LogicalPlan> {
                     expr => expr.clone(),
                 };
 
-                projection.insert(field.name().clone(), expr);
+                projection.insert(field.qualified_name(), expr);
             });
 
             // re-write all filters based on this projection
@@ -280,6 +280,33 @@ fn optimize(plan: &LogicalPlan, mut state: State) -> Result<LogicalPlan> {
             let new_input = optimize(input, state)?;
 
             utils::from_plan(&plan, &expr, &vec![new_input])
+        }
+        LogicalPlan::Union { schema, .. } => {
+            let used_columns = plan
+                .schema()
+                .fields()
+                .iter()
+                .map(|f| f.qualified_name())
+                .collect::<HashSet<_>>();
+
+            let mut projection = HashMap::new();
+            schema.fields().iter().for_each(|field| {
+                projection.insert(
+                    field.qualified_name(),
+                    Expr::Column(field.name().to_string(), None),
+                );
+            });
+
+            // re-write all filters based on this projection
+            // E.g. in `Filter: #b\n  Projection: #a > 1 as b`, we can swap them, but the filter must be "#a > 1"
+            for (predicate, columns) in state.filters.iter_mut() {
+                *predicate = rewrite(predicate, &projection)?;
+
+                columns.clear();
+                utils::expr_to_column_names(predicate, columns)?;
+            }
+
+            issue_filters(state, used_columns, plan)
         }
         LogicalPlan::Aggregate {
             input, aggr_expr, ..
@@ -310,7 +337,7 @@ fn optimize(plan: &LogicalPlan, mut state: State) -> Result<LogicalPlan> {
                 .schema()
                 .fields()
                 .iter()
-                .map(|f| f.name().clone())
+                .map(|f| f.qualified_name())
                 .collect::<HashSet<_>>();
             issue_filters(state, used_columns, plan)
         }
@@ -387,7 +414,7 @@ fn optimize(plan: &LogicalPlan, mut state: State) -> Result<LogicalPlan> {
                 .schema()
                 .fields()
                 .iter()
-                .map(|f| f.name().clone())
+                .map(|f| f.qualified_name())
                 .collect::<HashSet<_>>();
             issue_filters(state, used_columns, plan)
         }

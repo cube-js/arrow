@@ -251,12 +251,12 @@ pub fn from_plan(
             n: *n,
             input: Arc::new(inputs[0].clone()),
         }),
-        LogicalPlan::Union { alias, .. } => Ok(LogicalPlan::Union {
+        LogicalPlan::Union { alias, schema, .. } => Ok(LogicalPlan::Union {
             inputs: inputs
                 .iter()
                 .map(|p| Arc::new(p.clone()))
                 .collect::<Vec<_>>(),
-            schema: inputs[0].schema().clone(),
+            schema: schema.clone(),
             alias: alias.clone(),
         }),
         LogicalPlan::Extension { node } => Ok(LogicalPlan::Extension {
