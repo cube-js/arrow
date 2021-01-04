@@ -18,7 +18,11 @@
 //! Defines the join plan for executing partitions in parallel and then joining the results
 //! into a set of partitions.
 
-use arrow::array::{TimestampMicrosecondArray, TimestampNanosecondArray};
+use arrow::array::{
+    BooleanArray, Int64Decimal0Array, Int64Decimal10Array, Int64Decimal1Array,
+    Int64Decimal2Array, Int64Decimal3Array, Int64Decimal4Array, Int64Decimal5Array,
+    TimestampMicrosecondArray, TimestampNanosecondArray,
+};
 use arrow::{array::ArrayRef, compute};
 use std::sync::Arc;
 use std::{any::Any, collections::HashSet};
@@ -396,6 +400,39 @@ pub(crate) fn create_key(
                 vec.extend(value.len().to_le_bytes().iter());
                 // store the string value
                 vec.extend(array.value(row).as_bytes().iter());
+            }
+            DataType::Boolean => {
+                let array = col.as_any().downcast_ref::<BooleanArray>().unwrap();
+                let x: u8 = if array.value(row) { 1 } else { 0 };
+                vec.extend(&[x]);
+            }
+            DataType::Int64Decimal(0) => {
+                let array = col.as_any().downcast_ref::<Int64Decimal0Array>().unwrap();
+                vec.extend(array.value(row).to_le_bytes().iter());
+            }
+            DataType::Int64Decimal(1) => {
+                let array = col.as_any().downcast_ref::<Int64Decimal1Array>().unwrap();
+                vec.extend(array.value(row).to_le_bytes().iter());
+            }
+            DataType::Int64Decimal(2) => {
+                let array = col.as_any().downcast_ref::<Int64Decimal2Array>().unwrap();
+                vec.extend(array.value(row).to_le_bytes().iter());
+            }
+            DataType::Int64Decimal(3) => {
+                let array = col.as_any().downcast_ref::<Int64Decimal3Array>().unwrap();
+                vec.extend(array.value(row).to_le_bytes().iter());
+            }
+            DataType::Int64Decimal(4) => {
+                let array = col.as_any().downcast_ref::<Int64Decimal4Array>().unwrap();
+                vec.extend(array.value(row).to_le_bytes().iter());
+            }
+            DataType::Int64Decimal(5) => {
+                let array = col.as_any().downcast_ref::<Int64Decimal5Array>().unwrap();
+                vec.extend(array.value(row).to_le_bytes().iter());
+            }
+            DataType::Int64Decimal(10) => {
+                let array = col.as_any().downcast_ref::<Int64Decimal10Array>().unwrap();
+                vec.extend(array.value(row).to_le_bytes().iter());
             }
             _ => {
                 // This is internal because we should have caught this before.
