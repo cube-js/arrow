@@ -3532,7 +3532,7 @@ mod tests {
             &schema.clone().to_dfschema()?,
         )?;
         assert_eq!(
-            expression.data_type(&schema.clone().to_dfschema()?)?,
+            expression.data_type(&schema.to_dfschema()?)?,
             DataType::Boolean
         );
 
@@ -4352,8 +4352,7 @@ mod tests {
         let input = BooleanArray::from(vec![Some(true), None, Some(false)]);
         let expected = &BooleanArray::from(vec![Some(false), None, Some(true)]);
 
-        let batch =
-            RecordBatch::try_new(Arc::new(schema.clone()), vec![Arc::new(input)])?;
+        let batch = RecordBatch::try_new(Arc::new(schema), vec![Arc::new(input)])?;
 
         let result = expr.evaluate(&batch)?.into_array(batch.num_rows());
         let result = result
