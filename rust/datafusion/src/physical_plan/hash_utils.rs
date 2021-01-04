@@ -38,52 +38,52 @@ pub type JoinOn = [(String, String)];
 /// Checks whether the schemas "left" and "right" and columns "on" represent a valid join.
 /// They are valid whenever their columns' intersection equals the set `on`
 pub fn check_join_is_valid(left: &DFSchema, right: &DFSchema, on: &JoinOn) -> Result<()> {
-    let left: HashSet<String> =
-        left.fields().iter().map(|f| f.qualified_name()).collect();
-    let right: HashSet<String> =
-        right.fields().iter().map(|f| f.qualified_name()).collect();
-
-    check_join_set_is_valid(&left, &right, on)
-}
-
-/// Checks whether the sets left, right and on compose a valid join.
-/// They are valid whenever their intersection equals the set `on`
-fn check_join_set_is_valid(
-    left: &HashSet<String>,
-    right: &HashSet<String>,
-    on: &JoinOn,
-) -> Result<()> {
     if on.is_empty() {
         return Err(DataFusionError::Plan(
             "The 'on' clause of a join cannot be empty".to_string(),
         ));
     }
     let on_left = &on.iter().map(|on| on.0.to_string()).collect::<HashSet<_>>();
-    let left_missing = on_left.difference(left).collect::<HashSet<_>>();
+    let left_missing = on_left
+        .iter()
+        .filter(|f| left.lookup_required_field_index(f).is_err())
+        .collect::<HashSet<_>>();
 
     let on_right = &on.iter().map(|on| on.1.to_string()).collect::<HashSet<_>>();
-    let right_missing = on_right.difference(right).collect::<HashSet<_>>();
+    let right_missing = on_right
+        .iter()
+        .filter(|f| right.lookup_required_field_index(f).is_err())
+        .collect::<HashSet<_>>();
 
     if !left_missing.is_empty() | !right_missing.is_empty() {
         return Err(DataFusionError::Plan(format!(
-                "The left or right side of the join does not have all columns on \"on\": \nMissing on the left: {:?}\nMissing on the right: {:?}",
-                left_missing,
-                right_missing,
-            )));
+            "The left or right side of the join does not have all columns on \"on\": \nMissing on the left: {:?}\nMissing on the right: {:?}",
+            left_missing,
+            right_missing,
+        )));
     };
 
     let remaining = right
+        .fields()
+        .iter()
+        .map(|f| f.qualified_name())
+        .collect::<HashSet<_>>()
         .difference(on_right)
         .cloned()
         .collect::<HashSet<String>>();
 
-    let collisions = left.intersection(&remaining).collect::<HashSet<_>>();
+    let left_fields = left
+        .fields()
+        .iter()
+        .map(|f| f.qualified_name())
+        .collect::<HashSet<_>>();
+    let collisions = left_fields.intersection(&remaining).collect::<HashSet<_>>();
 
     if !collisions.is_empty() {
         return Err(DataFusionError::Plan(format!(
-                "The left schema and the right schema have the following columns with the same name without being on the ON statement: {:?}. Consider aliasing them.",
-                collisions,
-            )));
+            "The left schema and the right schema have the following columns with the same name without being on the ON statement: {:?}. Consider aliasing them.",
+            collisions,
+        )));
     };
 
     Ok(())
@@ -142,15 +142,25 @@ pub fn build_join_schema(
 mod tests {
 
     use super::*;
+    use arrow::datatypes::DataType;
 
     fn check(left: &[&str], right: &[&str], on: &[(&str, &str)]) -> Result<()> {
-        let left = left.iter().map(|x| x.to_string()).collect::<HashSet<_>>();
-        let right = right.iter().map(|x| x.to_string()).collect::<HashSet<_>>();
+        let left = DFSchema::new(
+            left.iter()
+                .map(|x| DFField::new(None, x, DataType::Utf8, false))
+                .collect::<Vec<_>>(),
+        )?;
+        let right = DFSchema::new(
+            right
+                .iter()
+                .map(|x| DFField::new(None, x, DataType::Utf8, false))
+                .collect::<Vec<_>>(),
+        )?;
         let on: Vec<_> = on
             .iter()
             .map(|(l, r)| (l.to_string(), r.to_string()))
             .collect();
-        check_join_set_is_valid(&left, &right, &on)
+        check_join_is_valid(&left, &right, &on)
     }
 
     #[test]

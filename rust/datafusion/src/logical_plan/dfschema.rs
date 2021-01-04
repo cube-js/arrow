@@ -152,12 +152,7 @@ impl DFSchema {
 
     /// Name can be fully qualified or not. Used for projection push down optimization
     pub fn lookup_required_field_index(&self, name: &str) -> Result<usize> {
-        let split = name.split('.').collect::<Vec<_>>();
-        let field = if split.len() == 1 {
-            self.field_with_unqualified_name(name)?
-        } else {
-            self.field_with_name(Some(&split[0]), &split[1])?
-        };
+        let field = self.lookup_field_by_string_name(name)?;
         self.fields
             .iter()
             .enumerate()
@@ -168,6 +163,17 @@ impl DFSchema {
                     field, self
                 ))
             })
+    }
+
+    /// Lookup by flatten string name. Name can be fully qualified or not.
+    pub fn lookup_field_by_string_name(&self, name: &str) -> Result<DFField> {
+        let split = name.split('.').collect::<Vec<_>>();
+        let field = if split.len() == 1 {
+            self.field_with_unqualified_name(name)?
+        } else {
+            self.field_with_name(Some(&split[0]), &split[1])?
+        };
+        Ok(field)
     }
 
     /// Find the field with the given name
