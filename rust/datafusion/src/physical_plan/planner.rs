@@ -117,14 +117,12 @@ impl DefaultPhysicalPlanner {
         } else {
             // wrap operators in CoalesceBatches to avoid lots of tiny batches when we have
             // highly selective filters
-            let plan_any = plan.as_any();
+            let _plan_any = plan.as_any();
             //TODO we should do this in a more generic way either by wrapping all operators
             // or having an API so that operators can declare when their inputs or outputs
             // need to be wrapped in a coalesce batches operator.
             // See https://issues.apache.org/jira/browse/ARROW-11068
-            let wrap_in_coalesce = plan_any.downcast_ref::<FilterExec>().is_some()
-                || plan_any.downcast_ref::<HashJoinExec>().is_some()
-                || plan_any.downcast_ref::<RepartitionExec>().is_some();
+            let wrap_in_coalesce = false;
 
             //TODO we should also do this for HashAggregateExec but we need to update tests
             // as part of this work - see https://issues.apache.org/jira/browse/ARROW-11068
@@ -846,8 +844,7 @@ mod tests {
             &schema.clone().to_dfschema()?,
             &make_ctx_state(),
         )?;
-        let expected =
-            expressions::not(expressions::col("a"), &schema.clone().to_dfschema()?)?;
+        let expected = expressions::not(expressions::col("a"), &schema.to_dfschema()?)?;
 
         assert_eq!(format!("{:?}", expr), format!("{:?}", expected));
 

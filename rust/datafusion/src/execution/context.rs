@@ -675,6 +675,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "Coalesce disabled due to it doesn't work"]
     async fn parallel_query_with_filter() -> Result<()> {
         let tmp_dir = TempDir::new()?;
         let partition_count = 4;
