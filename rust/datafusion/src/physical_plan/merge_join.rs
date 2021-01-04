@@ -471,7 +471,7 @@ mod tests {
     }
 
     fn assert_same_rows(result: &[String], expected: &[&str]) {
-        let result = result.iter().cloned().collect::<Vec<_>>();
+        let result = result.to_vec();
 
         let expected = expected.iter().map(|s| s.to_string()).collect::<Vec<_>>();
         assert_eq!(result, expected);
