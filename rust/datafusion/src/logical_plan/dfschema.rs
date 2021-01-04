@@ -144,7 +144,10 @@ impl DFSchema {
                 return Ok(i);
             }
         }
-        Err(DataFusionError::Plan(format!("No field named '{}'", name)))
+        Err(DataFusionError::Plan(format!(
+            "No field named '{}' for schema: {}",
+            name, self
+        )))
     }
 
     /// Name can be fully qualified or not. Used for projection push down optimization
@@ -159,7 +162,12 @@ impl DFSchema {
             .iter()
             .enumerate()
             .find_map(|(i, f)| if f == &field { Some(i) } else { None })
-            .ok_or_else(|| DataFusionError::Plan(format!("No field '{:?}'", field)))
+            .ok_or_else(|| {
+                DataFusionError::Plan(format!(
+                    "No field '{:?}' for schema: {}",
+                    field, self
+                ))
+            })
     }
 
     /// Find the field with the given name
@@ -183,7 +191,10 @@ impl DFSchema {
             .filter(|field| field.name() == name)
             .collect();
         match matches.len() {
-            0 => Err(DataFusionError::Plan(format!("No field named '{}'", name))),
+            0 => Err(DataFusionError::Plan(format!(
+                "No field named '{}' for schema: {}",
+                name, self
+            ))),
             1 => Ok(matches[0].to_owned()),
             _ => Err(DataFusionError::Plan(format!(
                 "Ambiguous reference to field named '{}'",
@@ -207,12 +218,12 @@ impl DFSchema {
             .collect();
         match matches.len() {
             0 => Err(DataFusionError::Plan(format!(
-                "No field named '{}.{}'",
-                relation_name, name
+                "No field named '{}'.'{}' for schema: {}",
+                relation_name, name, self
             ))),
             1 => Ok(matches[0].to_owned()),
             _ => Err(DataFusionError::Internal(format!(
-                "Ambiguous reference to qualified field named '{}.{}'",
+                "Ambiguous reference to qualified field named '{}'.'{}'",
                 relation_name, name
             ))),
         }

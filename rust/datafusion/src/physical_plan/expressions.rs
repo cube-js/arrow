@@ -23,7 +23,7 @@ use std::sync::Arc;
 
 use super::ColumnarValue;
 use crate::error::{DataFusionError, Result};
-use crate::logical_plan::{DFSchema, DFSchemaRef, Operator, ToDFSchema};
+use crate::logical_plan::{DFSchema, DFSchemaRef, Operator};
 use crate::physical_plan::{
     Accumulator, AggregateExpr, ExecutionPlan, Partitioning, PhysicalExpr,
     RecordBatchStream, SendableRecordBatchStream,
@@ -101,6 +101,17 @@ impl Column {
             name: name.to_owned(),
             relation,
         }
+    }
+
+    /// Try to search with prefix and then without
+    pub fn lookup_field<'a>(&self, schema: &'a Schema) -> Result<&'a Field> {
+        schema.field_with_name(&self.full_name()).or_else(|e| {
+            schema
+                .fields()
+                .iter()
+                .find(|f| f.name().ends_with(&format!(".{}", self.name)))
+                .ok_or(DataFusionError::ArrowError(e))
+        })
     }
 
     /// Return fully qualified name if alias provided and short name if it's None
@@ -229,7 +240,11 @@ impl PhysicalExpr for Column {
     fn evaluate(&self, batch: &RecordBatch) -> Result<ColumnarValue> {
         Ok(ColumnarValue::Array(
             batch
-                .column(batch.schema().index_of(&self.full_name())?)
+                .column(
+                    batch
+                        .schema()
+                        .index_of(&self.lookup_field(&batch.schema())?.name())?,
+                )
                 .clone(),
         ))
     }
@@ -2858,21 +2873,15 @@ impl CaseExpr {
     ///     [ELSE result]
     /// END
     fn case_when_with_expr(&self, batch: &RecordBatch) -> Result<ColumnarValue> {
-        //TODO
-        let return_type = self.when_then_expr[0]
-            .1
-            .data_type(&batch.schema().to_dfschema()?)?;
         let expr = self.expr.as_ref().unwrap();
         let base_value = expr.evaluate(batch)?;
-        //TODO
-        let base_type = expr.data_type(&batch.schema().to_dfschema()?)?;
         let base_value = base_value.into_array(batch.num_rows());
 
         // start with the else condition, or nulls
         let mut current_value: Option<ArrayRef> = if let Some(e) = &self.else_expr {
             Some(e.evaluate(batch)?.into_array(batch.num_rows()))
         } else {
-            Some(build_null_array(&return_type, batch.num_rows())?)
+            None
         };
 
         // walk backwards through the when/then expressions
@@ -2886,13 +2895,17 @@ impl CaseExpr {
             let then_value = then_value.into_array(batch.num_rows());
 
             // build boolean array representing which rows match the "when" value
-            let when_match = array_equals(&base_type, when_value, base_value.clone())?;
+            let when_match =
+                array_equals(base_value.data_type(), when_value, base_value.clone())?;
 
+            let return_type = then_value.data_type();
             current_value = Some(if_then_else(
                 &when_match,
-                then_value,
-                current_value.unwrap(),
-                &return_type,
+                then_value.clone(),
+                current_value
+                    .map(Ok)
+                    .unwrap_or_else(|| build_null_array(return_type, batch.num_rows()))?,
+                return_type,
             )?);
         }
 
@@ -2907,15 +2920,11 @@ impl CaseExpr {
     ///      [ELSE result]
     /// END
     fn case_when_no_expr(&self, batch: &RecordBatch) -> Result<ColumnarValue> {
-        let return_type = self.when_then_expr[0]
-            .1
-            .data_type(&batch.schema().to_dfschema()?)?;
-
         // start with the else condition, or nulls
         let mut current_value: Option<ArrayRef> = if let Some(e) = &self.else_expr {
             Some(e.evaluate(batch)?.into_array(batch.num_rows()))
         } else {
-            Some(build_null_array(&return_type, batch.num_rows())?)
+            None
         };
 
         // walk backwards through the when/then expressions
@@ -2933,11 +2942,14 @@ impl CaseExpr {
             let then_value = self.when_then_expr[i].1.evaluate(batch)?;
             let then_value = then_value.into_array(batch.num_rows());
 
+            let return_type = then_value.data_type();
             current_value = Some(if_then_else(
                 &when_value,
-                then_value,
-                current_value.unwrap(),
-                &return_type,
+                then_value.clone(),
+                current_value
+                    .map(Ok)
+                    .unwrap_or_else(|| build_null_array(return_type, batch.num_rows()))?,
+                return_type,
             )?);
         }
 
@@ -3184,6 +3196,7 @@ mod tests {
         },
         util::display::array_value_to_string,
     };
+    use crate::logical_plan::ToDFSchema;
 
     // Create a binary expression without coercion. Used here when we do not want to coerce the expressions
     // to valid types. Usage can result in an execution (after plan) error.
