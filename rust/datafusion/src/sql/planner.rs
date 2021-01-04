@@ -384,7 +384,7 @@ impl<'a, S: ContextProvider> SqlToRel<'a, S> {
                         &table_name,
                         provider,
                         None,
-                        alias.as_ref().map(|a| a.to_string()),
+                        alias.as_ref().map(|i| i.name.value.to_string()),
                     )?
                     .build(),
                     None => Err(DataFusionError::Plan(format!(
