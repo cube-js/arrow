@@ -25,13 +25,14 @@ use std::sync::Arc;
 use crate::error::{DataFusionError, Result};
 
 use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
+use serde_derive::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};
 
 /// A reference-counted reference to a `DFSchema`.
 pub type DFSchemaRef = Arc<DFSchema>;
 
 /// DFSchema wraps an Arrow schema and adds relation names
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DFSchema {
     /// Fields
     fields: Vec<DFField>,
@@ -320,7 +321,7 @@ impl Display for DFSchema {
 }
 
 /// DFField wraps an Arrow field and adds an optional qualifier
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DFField {
     /// Optional qualifier (usually a table or relation name)
     qualifier: Option<String>,
