@@ -68,7 +68,7 @@ pub fn can_cast_types(from_type: &DataType, to_type: &DataType) -> bool {
         (Dictionary(_, value_type), _) => can_cast_types(value_type, to_type),
         (_, Dictionary(_, value_type)) => can_cast_types(from_type, value_type),
 
-        (_, Boolean) => DataType::is_numeric(from_type),
+        (_, Boolean) => DataType::is_numeric(from_type) || from_type == &Utf8,
         (Boolean, _) => DataType::is_numeric(to_type) || to_type == &Utf8,
 
         (Utf8, Date32(DateUnit::Day)) => true,
@@ -620,10 +620,26 @@ pub fn cast(array: &ArrayRef, to_type: &DataType) -> Result<ArrayRef> {
             Int64 => cast_numeric_to_bool::<Int64Type>(array),
             Float32 => cast_numeric_to_bool::<Float32Type>(array),
             Float64 => cast_numeric_to_bool::<Float64Type>(array),
-            Utf8 => Err(ArrowError::ComputeError(format!(
-                "Casting from {:?} to {:?} not supported",
-                from_type, to_type,
-            ))),
+            Utf8 => {
+                let array = array.as_any().downcast_ref::<StringArray>().unwrap();
+                let mut builder = BooleanArray::builder(array.len());
+                for i in 0..array.len() {
+                    if array.is_valid(i) {
+                        let value = array.value(i);
+                        if value.to_lowercase() == "true" || value == "1" {
+                            builder.append_value(true)?;
+                        } else if value.to_lowercase() == "false" || value == "0" {
+                            builder.append_value(false)?;
+                        } else {
+                            // TODO arrow doesn't expect errors if can_cast is true
+                            builder.append_null()?;
+                        };
+                    } else {
+                        builder.append_null()?;
+                    }
+                }
+                Ok(Arc::new(builder.finish()))
+            }
             _ => Err(ArrowError::ComputeError(format!(
                 "Casting from {:?} to {:?} not supported",
                 from_type, to_type,
