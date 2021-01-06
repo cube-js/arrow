@@ -663,6 +663,10 @@ pub fn cast(array: &ArrayRef, to_type: &DataType) -> Result<ArrayRef> {
             Int16 => cast_string_to_numeric::<Int16Type>(array),
             Int32 => cast_string_to_numeric::<Int32Type>(array),
             Int64 => cast_string_to_numeric::<Int64Type>(array),
+            Int64Decimal(scale) => {
+                let float_from_string = cast_string_to_numeric::<Float64Type>(array)?;
+                int_decimal_cast_from!(float_from_string, Float64Array, f64, scale)
+            }
             Float32 => cast_string_to_numeric::<Float32Type>(array),
             Float64 => cast_string_to_numeric::<Float64Type>(array),
             Date32(DateUnit::Day) => {
@@ -714,6 +718,11 @@ pub fn cast(array: &ArrayRef, to_type: &DataType) -> Result<ArrayRef> {
             Int16 => cast_numeric_to_string::<Int16Type>(array),
             Int32 => cast_numeric_to_string::<Int32Type>(array),
             Int64 => cast_numeric_to_string::<Int64Type>(array),
+            Int64Decimal(scale) => {
+                let float_array: Result<ArrayRef> =
+                    int_decimal_cast_to!(array, Float64Builder, f64, scale);
+                cast_numeric_to_string::<Float64Type>(&float_array?)
+            }
             Float32 => cast_numeric_to_string::<Float32Type>(array),
             Float64 => cast_numeric_to_string::<Float64Type>(array),
             Binary => {
