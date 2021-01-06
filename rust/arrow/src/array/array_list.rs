@@ -25,7 +25,7 @@ use num::Num;
 
 use super::{
     array::print_long_array, make_array, raw_pointer::RawPtrBox, Array, ArrayDataRef,
-    ArrayRef, BinaryBuilder, LargeListBuilder, ListBuilder, PrimitiveBuilder,
+    ArrayRef, BinaryBuilder, LargeListBuilder, ListBuilder, PrimitiveBuilder, BooleanBuilder,
     StringBuilder,
 };
 use crate::datatypes::ArrowNativeType;
@@ -366,8 +366,10 @@ macro_rules! make_empty_list_fn {
                     )
                 }
                 DataType::Boolean => {
-                    //build_empty_list_array_with_primitive_items!(ArrowBooleanType)
-                    todo!()
+                    build_empty_list_array_with_non_primitive_items!(
+                        BooleanBuilder,
+                        $list_builder
+                    )
                 }
                 DataType::Date32(_) => {
                     build_empty_list_array_with_primitive_items!(
