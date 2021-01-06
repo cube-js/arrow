@@ -809,7 +809,7 @@ impl<OffsetSize: OffsetSizeTrait> ArrayReader for ListArrayReader<OffsetSize> {
 
         if next_batch_array.len() == 0 {
             return build_empty_list_array(item_type)
-                .or_else(|err| Err(ParquetError::General(err.to_string())));
+                .map_err(|err| ParquetError::General(err.to_string()));
         }
         let def_levels = self
             .item_reader
