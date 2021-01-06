@@ -25,8 +25,8 @@ use num::Num;
 
 use super::{
     array::print_long_array, make_array, raw_pointer::RawPtrBox, Array, ArrayDataRef,
-    ArrayRef, BinaryBuilder, LargeListBuilder, ListBuilder, PrimitiveBuilder, BooleanBuilder,
-    StringBuilder,
+    ArrayRef, BinaryBuilder, BooleanBuilder, LargeListBuilder, ListBuilder,
+    PrimitiveBuilder, StringBuilder,
 };
 use crate::datatypes::ArrowNativeType;
 use crate::datatypes::*;

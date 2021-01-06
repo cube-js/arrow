@@ -25,9 +25,10 @@ use std::vec::Vec;
 
 use arrow::array::{
     build_empty_list_array, Array, ArrayData, ArrayDataBuilder, ArrayDataRef, ArrayRef,
-    BinaryArray, BinaryBuilder, BooleanArray, BooleanBufferBuilder, FixedSizeBinaryArray,
-    FixedSizeBinaryBuilder, GenericListArray, Int16BufferBuilder, OffsetSizeTrait,
-    PrimitiveArray, PrimitiveBuilder, StringArray, StringBuilder, StructArray,
+    BinaryArray, BinaryBuilder, BooleanArray, BooleanBufferBuilder, BooleanBuilder,
+    FixedSizeBinaryArray, FixedSizeBinaryBuilder, GenericListArray, Int16BufferBuilder,
+    OffsetSizeTrait, PrimitiveArray, PrimitiveBuilder, StringArray, StringBuilder,
+    StructArray,
 };
 use arrow::buffer::{Buffer, MutableBuffer};
 use arrow::datatypes::{
@@ -721,8 +722,12 @@ fn remove_indices(
             remove_primitive_array_indices!(arr, ArrowFloat64Type, indices)
         }
         ArrowType::Boolean => {
-            todo!()
-            //remove_primitive_array_indices!(arr, ArrowBooleanType, indices)
+            remove_array_indices_custom_builder!(
+                arr,
+                BooleanArray,
+                BooleanBuilder,
+                indices
+            )
         }
         ArrowType::Date32(_) => {
             remove_primitive_array_indices!(arr, ArrowDate32Type, indices)
