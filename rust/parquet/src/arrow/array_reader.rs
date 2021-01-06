@@ -24,11 +24,10 @@ use std::sync::Arc;
 use std::vec::Vec;
 
 use arrow::array::{
-    Array, ArrayData, ArrayDataBuilder, ArrayDataRef, ArrayRef, BinaryArray,
-    BinaryBuilder, BooleanArray, BooleanBufferBuilder, FixedSizeBinaryArray,
-    FixedSizeBinaryBuilder, GenericListArray, Int16BufferBuilder, ListBuilder,
-    OffsetSizeTrait, PrimitiveArray, PrimitiveBuilder, StringArray, StringBuilder,
-    StructArray,
+    build_empty_list_array, Array, ArrayData, ArrayDataBuilder, ArrayDataRef, ArrayRef,
+    BinaryArray, BinaryBuilder, BooleanArray, BooleanBufferBuilder, FixedSizeBinaryArray,
+    FixedSizeBinaryBuilder, GenericListArray, Int16BufferBuilder, OffsetSizeTrait,
+    PrimitiveArray, PrimitiveBuilder, StringArray, StringBuilder, StructArray,
 };
 use arrow::buffer::{Buffer, MutableBuffer};
 use arrow::datatypes::{
@@ -634,105 +633,6 @@ impl<OffsetSize: OffsetSizeTrait> ListArrayReader<OffsetSize> {
     }
 }
 
-macro_rules! build_empty_list_array_with_primitive_items {
-    ($item_type:ident) => {{
-        let values_builder = PrimitiveBuilder::<$item_type>::new(0);
-        let mut builder = ListBuilder::new(values_builder);
-        let empty_list_array = builder.finish();
-        Ok(Arc::new(empty_list_array))
-    }};
-}
-
-macro_rules! build_empty_list_array_with_non_primitive_items {
-    ($builder:ident) => {{
-        let values_builder = $builder::new(0);
-        let mut builder = ListBuilder::new(values_builder);
-        let empty_list_array = builder.finish();
-        Ok(Arc::new(empty_list_array))
-    }};
-}
-
-fn build_empty_list_array(item_type: ArrowType) -> Result<ArrayRef> {
-    match item_type {
-        ArrowType::UInt8 => build_empty_list_array_with_primitive_items!(ArrowUInt8Type),
-        ArrowType::UInt16 => {
-            build_empty_list_array_with_primitive_items!(ArrowUInt16Type)
-        }
-        ArrowType::UInt32 => {
-            build_empty_list_array_with_primitive_items!(ArrowUInt32Type)
-        }
-        ArrowType::UInt64 => {
-            build_empty_list_array_with_primitive_items!(ArrowUInt64Type)
-        }
-        ArrowType::Int8 => build_empty_list_array_with_primitive_items!(ArrowInt8Type),
-        ArrowType::Int16 => build_empty_list_array_with_primitive_items!(ArrowInt16Type),
-        ArrowType::Int32 => build_empty_list_array_with_primitive_items!(ArrowInt32Type),
-        ArrowType::Int64 => build_empty_list_array_with_primitive_items!(ArrowInt64Type),
-        ArrowType::Float32 => {
-            build_empty_list_array_with_primitive_items!(ArrowFloat32Type)
-        }
-        ArrowType::Float64 => {
-            build_empty_list_array_with_primitive_items!(ArrowFloat64Type)
-        }
-        ArrowType::Boolean => {
-            //build_empty_list_array_with_primitive_items!(ArrowBooleanType)
-            todo!()
-        }
-        ArrowType::Date32(_) => {
-            build_empty_list_array_with_primitive_items!(ArrowDate32Type)
-        }
-        ArrowType::Date64(_) => {
-            build_empty_list_array_with_primitive_items!(ArrowDate64Type)
-        }
-        ArrowType::Time32(ArrowTimeUnit::Second) => {
-            build_empty_list_array_with_primitive_items!(ArrowTime32SecondType)
-        }
-        ArrowType::Time32(ArrowTimeUnit::Millisecond) => {
-            build_empty_list_array_with_primitive_items!(ArrowTime32MillisecondType)
-        }
-        ArrowType::Time64(ArrowTimeUnit::Microsecond) => {
-            build_empty_list_array_with_primitive_items!(ArrowTime64MicrosecondType)
-        }
-        ArrowType::Time64(ArrowTimeUnit::Nanosecond) => {
-            build_empty_list_array_with_primitive_items!(ArrowTime64NanosecondType)
-        }
-        ArrowType::Duration(ArrowTimeUnit::Second) => {
-            build_empty_list_array_with_primitive_items!(ArrowDurationSecondType)
-        }
-        ArrowType::Duration(ArrowTimeUnit::Millisecond) => {
-            build_empty_list_array_with_primitive_items!(ArrowDurationMillisecondType)
-        }
-        ArrowType::Duration(ArrowTimeUnit::Microsecond) => {
-            build_empty_list_array_with_primitive_items!(ArrowDurationMicrosecondType)
-        }
-        ArrowType::Duration(ArrowTimeUnit::Nanosecond) => {
-            build_empty_list_array_with_primitive_items!(ArrowDurationNanosecondType)
-        }
-        ArrowType::Timestamp(ArrowTimeUnit::Second, _) => {
-            build_empty_list_array_with_primitive_items!(ArrowTimestampSecondType)
-        }
-        ArrowType::Timestamp(ArrowTimeUnit::Millisecond, _) => {
-            build_empty_list_array_with_primitive_items!(ArrowTimestampMillisecondType)
-        }
-        ArrowType::Timestamp(ArrowTimeUnit::Microsecond, _) => {
-            build_empty_list_array_with_primitive_items!(ArrowTimestampMicrosecondType)
-        }
-        ArrowType::Timestamp(ArrowTimeUnit::Nanosecond, _) => {
-            build_empty_list_array_with_primitive_items!(ArrowTimestampNanosecondType)
-        }
-        ArrowType::Utf8 => {
-            build_empty_list_array_with_non_primitive_items!(StringBuilder)
-        }
-        ArrowType::Binary => {
-            build_empty_list_array_with_non_primitive_items!(BinaryBuilder)
-        }
-        _ => Err(ParquetError::General(format!(
-            "ListArray of type List({:?}) is not supported by array_reader",
-            item_type
-        ))),
-    }
-}
-
 macro_rules! remove_primitive_array_indices {
     ($arr: expr, $item_type:ty, $indices:expr) => {{
         let array_data = match $arr.as_any().downcast_ref::<PrimitiveArray<$item_type>>() {
@@ -903,7 +803,8 @@ impl<OffsetSize: OffsetSizeTrait> ArrayReader for ListArrayReader<OffsetSize> {
         let item_type = self.item_reader.get_data_type().clone();
 
         if next_batch_array.len() == 0 {
-            return build_empty_list_array(item_type);
+            return build_empty_list_array(item_type)
+                .or_else(|err| Err(ParquetError::General(err.to_string())));
         }
         let def_levels = self
             .item_reader

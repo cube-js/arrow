@@ -19,15 +19,18 @@ use std::any::Any;
 use std::convert::From;
 use std::fmt;
 use std::mem;
+use std::sync::Arc;
 
 use num::Num;
 
 use super::{
     array::print_long_array, make_array, raw_pointer::RawPtrBox, Array, ArrayDataRef,
-    ArrayRef,
+    ArrayRef, BinaryBuilder, LargeListBuilder, ListBuilder, PrimitiveBuilder,
+    StringBuilder,
 };
 use crate::datatypes::ArrowNativeType;
-use crate::datatypes::DataType;
+use crate::datatypes::*;
+use crate::error::{ArrowError, Result};
 
 /// trait declaring an offset size, relevant for i32 vs i64 array types.
 pub trait OffsetSizeTrait: ArrowNativeType + Num + Ord + std::ops::AddAssign {
@@ -294,6 +297,187 @@ impl fmt::Debug for FixedSizeListArray {
         write!(f, "]")
     }
 }
+
+macro_rules! build_empty_list_array_with_primitive_items {
+    ($item_type:ident, $list_builder:ident) => {{
+        let values_builder = PrimitiveBuilder::<$item_type>::new(0);
+        let mut builder = $list_builder::new(values_builder);
+        let empty_list_array = builder.finish();
+        Ok(Arc::new(empty_list_array))
+    }};
+}
+
+macro_rules! build_empty_list_array_with_non_primitive_items {
+    ($type_builder:ident, $list_builder:ident) => {{
+        let values_builder = $type_builder::new(0);
+        let mut builder = $list_builder::new(values_builder);
+        let empty_list_array = builder.finish();
+        Ok(Arc::new(empty_list_array))
+    }};
+}
+
+macro_rules! make_empty_list_fn {
+    ($name:ident, $list_builder:ident) => {
+        pub fn $name(item_type: DataType) -> Result<ArrayRef> {
+            match item_type {
+                DataType::UInt8 => {
+                    build_empty_list_array_with_primitive_items!(UInt8Type, $list_builder)
+                }
+                DataType::UInt16 => {
+                    build_empty_list_array_with_primitive_items!(
+                        UInt16Type,
+                        $list_builder
+                    )
+                }
+                DataType::UInt32 => {
+                    build_empty_list_array_with_primitive_items!(
+                        UInt32Type,
+                        $list_builder
+                    )
+                }
+                DataType::UInt64 => {
+                    build_empty_list_array_with_primitive_items!(
+                        UInt64Type,
+                        $list_builder
+                    )
+                }
+                DataType::Int8 => {
+                    build_empty_list_array_with_primitive_items!(Int8Type, $list_builder)
+                }
+                DataType::Int16 => {
+                    build_empty_list_array_with_primitive_items!(Int16Type, $list_builder)
+                }
+                DataType::Int32 => {
+                    build_empty_list_array_with_primitive_items!(Int32Type, $list_builder)
+                }
+                DataType::Int64 => {
+                    build_empty_list_array_with_primitive_items!(Int64Type, $list_builder)
+                }
+                DataType::Float32 => {
+                    build_empty_list_array_with_primitive_items!(
+                        Float32Type,
+                        $list_builder
+                    )
+                }
+                DataType::Float64 => {
+                    build_empty_list_array_with_primitive_items!(
+                        Float64Type,
+                        $list_builder
+                    )
+                }
+                DataType::Boolean => {
+                    //build_empty_list_array_with_primitive_items!(ArrowBooleanType)
+                    todo!()
+                }
+                DataType::Date32(_) => {
+                    build_empty_list_array_with_primitive_items!(
+                        Date32Type,
+                        $list_builder
+                    )
+                }
+                DataType::Date64(_) => {
+                    build_empty_list_array_with_primitive_items!(
+                        Date64Type,
+                        $list_builder
+                    )
+                }
+                DataType::Time32(TimeUnit::Second) => {
+                    build_empty_list_array_with_primitive_items!(
+                        Time32SecondType,
+                        $list_builder
+                    )
+                }
+                DataType::Time32(TimeUnit::Millisecond) => {
+                    build_empty_list_array_with_primitive_items!(
+                        Time32MillisecondType,
+                        $list_builder
+                    )
+                }
+                DataType::Time64(TimeUnit::Microsecond) => {
+                    build_empty_list_array_with_primitive_items!(
+                        Time64MicrosecondType,
+                        $list_builder
+                    )
+                }
+                DataType::Time64(TimeUnit::Nanosecond) => {
+                    build_empty_list_array_with_primitive_items!(
+                        Time64NanosecondType,
+                        $list_builder
+                    )
+                }
+                DataType::Duration(TimeUnit::Second) => {
+                    build_empty_list_array_with_primitive_items!(
+                        DurationSecondType,
+                        $list_builder
+                    )
+                }
+                DataType::Duration(TimeUnit::Millisecond) => {
+                    build_empty_list_array_with_primitive_items!(
+                        DurationMillisecondType,
+                        $list_builder
+                    )
+                }
+                DataType::Duration(TimeUnit::Microsecond) => {
+                    build_empty_list_array_with_primitive_items!(
+                        DurationMicrosecondType,
+                        $list_builder
+                    )
+                }
+                DataType::Duration(TimeUnit::Nanosecond) => {
+                    build_empty_list_array_with_primitive_items!(
+                        DurationNanosecondType,
+                        $list_builder
+                    )
+                }
+                DataType::Timestamp(TimeUnit::Second, _) => {
+                    build_empty_list_array_with_primitive_items!(
+                        TimestampSecondType,
+                        $list_builder
+                    )
+                }
+                DataType::Timestamp(TimeUnit::Millisecond, _) => {
+                    build_empty_list_array_with_primitive_items!(
+                        TimestampMillisecondType,
+                        $list_builder
+                    )
+                }
+                DataType::Timestamp(TimeUnit::Microsecond, _) => {
+                    build_empty_list_array_with_primitive_items!(
+                        TimestampMicrosecondType,
+                        $list_builder
+                    )
+                }
+                DataType::Timestamp(TimeUnit::Nanosecond, _) => {
+                    build_empty_list_array_with_primitive_items!(
+                        TimestampNanosecondType,
+                        $list_builder
+                    )
+                }
+                DataType::Utf8 => {
+                    build_empty_list_array_with_non_primitive_items!(
+                        StringBuilder,
+                        $list_builder
+                    )
+                }
+                DataType::Binary => {
+                    build_empty_list_array_with_non_primitive_items!(
+                        BinaryBuilder,
+                        $list_builder
+                    )
+                }
+                _ => Err(ArrowError::Unsupported(format!(
+                    "{} of type List({:?}) is not supported by {}",
+                    String::from(stringify!($list_builder)),
+                    item_type,
+                    String::from(stringify!($name))
+                ))),
+            }
+        }
+    };
+}
+
+make_empty_list_fn!(build_empty_list_array, ListBuilder);
+make_empty_list_fn!(build_empty_large_list_array, LargeListBuilder);
 
 #[cfg(test)]
 mod tests {
