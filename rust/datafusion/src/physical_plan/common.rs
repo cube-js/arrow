@@ -39,7 +39,7 @@ use arrow::{
     datatypes::Schema,
 };
 use arrow::{
-    array::{build_empty_large_list_array, build_empty_list_array},
+    array::{build_empty_fixed_size_list_array, build_empty_list_array},
     datatypes::{DataType, SchemaRef, TimeUnit},
 };
 use futures::{Stream, TryStreamExt};
@@ -191,12 +191,15 @@ pub fn create_batch_empty(schema: &Schema) -> ArrowResult<RecordBatch> {
                 TimestampNanosecondArray::from_vec(vec![] as Vec<i64>, None),
             )
                 as ArrayRef),
-            DataType::List(nested_type) => {
-                Ok(build_empty_list_array(nested_type.data_type().clone())?)
-            }
-            DataType::LargeList(nested_type) => Ok(build_empty_large_list_array(
+            DataType::List(nested_type) => Ok(build_empty_list_array::<i32>(
                 nested_type.data_type().clone(),
             )?),
+            DataType::LargeList(nested_type) => Ok(build_empty_list_array::<i64>(
+                nested_type.data_type().clone(),
+            )?),
+            DataType::FixedSizeList(nested_type, _) => Ok(
+                build_empty_fixed_size_list_array(nested_type.data_type().clone())?,
+            ),
             _ => Err(DataFusionError::NotImplemented(format!(
                 "Cannot convert datatype {:?} to array",
                 f.data_type()

@@ -808,7 +808,7 @@ impl<OffsetSize: OffsetSizeTrait> ArrayReader for ListArrayReader<OffsetSize> {
         let item_type = self.item_reader.get_data_type().clone();
 
         if next_batch_array.len() == 0 {
-            return build_empty_list_array(item_type)
+            return build_empty_list_array::<i32>(item_type)
                 .map_err(|err| ParquetError::General(err.to_string()));
         }
         let def_levels = self

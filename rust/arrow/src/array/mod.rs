@@ -119,7 +119,7 @@ pub use self::array_binary::FixedSizeBinaryArray;
 pub use self::array_binary::LargeBinaryArray;
 pub use self::array_boolean::BooleanArray;
 pub use self::array_dictionary::DictionaryArray;
-pub use self::array_list::build_empty_large_list_array;
+pub use self::array_list::build_empty_fixed_size_list_array;
 pub use self::array_list::build_empty_list_array;
 pub use self::array_list::FixedSizeListArray;
 pub use self::array_list::LargeListArray;
