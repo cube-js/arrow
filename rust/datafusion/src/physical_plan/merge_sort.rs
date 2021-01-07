@@ -26,7 +26,7 @@ use futures::stream::Stream;
 use futures::StreamExt;
 
 pub use arrow::compute::SortOptions;
-use arrow::compute::{is_not_null, take};
+use arrow::compute::{is_not_null, lexsort_to_indices, take, SortColumn, TakeOptions};
 use arrow::datatypes::SchemaRef;
 use arrow::error::Result as ArrowResult;
 use arrow::record_batch::RecordBatch;
@@ -38,6 +38,7 @@ use crate::physical_plan::expressions::if_then_else;
 use crate::physical_plan::{ExecutionPlan, Partitioning};
 
 use crate::logical_plan::DFSchemaRef;
+use crate::physical_plan::memory::MemoryStream;
 use arrow::compute::kernels::merge::merge_sort_indices;
 use async_trait::async_trait;
 use futures::future::join_all;
@@ -111,6 +112,126 @@ impl ExecutionPlan for MergeSortExec {
             self.columns.clone(),
         )))
     }
+}
+
+/// Sort execution plan to resort merge join results
+#[derive(Debug)]
+pub struct MergeReSortExec {
+    input: Arc<dyn ExecutionPlan>,
+    columns: Vec<String>,
+}
+
+impl MergeReSortExec {
+    /// Create a new sort execution plan
+    pub fn try_new(input: Arc<dyn ExecutionPlan>, columns: Vec<String>) -> Result<Self> {
+        Ok(Self { input, columns })
+    }
+}
+
+#[async_trait]
+impl ExecutionPlan for MergeReSortExec {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn schema(&self) -> DFSchemaRef {
+        self.input.schema()
+    }
+
+    fn children(&self) -> Vec<Arc<dyn ExecutionPlan>> {
+        vec![self.input.clone()]
+    }
+
+    fn output_partitioning(&self) -> Partitioning {
+        Partitioning::UnknownPartitioning(1)
+    }
+
+    fn with_new_children(
+        &self,
+        children: Vec<Arc<dyn ExecutionPlan>>,
+    ) -> Result<Arc<dyn ExecutionPlan>> {
+        Ok(Arc::new(MergeSortExec::try_new(
+            children[0].clone(),
+            self.columns.clone(),
+        )?))
+    }
+
+    async fn execute(&self, partition: usize) -> Result<SendableRecordBatchStream> {
+        if 0 != partition {
+            return Err(DataFusionError::Internal(format!(
+                "MergeSortExec invalid partition {}",
+                partition
+            )));
+        }
+
+        if 1 != self.input.output_partitioning().partition_count() {
+            return Err(DataFusionError::Internal(format!(
+                "MergeReSortExec expects only one partition but got {}",
+                self.input.output_partitioning().partition_count()
+            )));
+        }
+
+        let stream = self.input.execute(0).await?;
+        let all_batches = stream
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .collect::<ArrowResult<Vec<_>>>()?;
+
+        let schema = self.input.schema().to_schema_ref();
+        let sorted_batches = all_batches
+            .into_iter()
+            .map(|b| -> Result<SendableRecordBatchStream> {
+                Ok(Box::pin(MemoryStream::try_new(
+                    vec![sort_batch(&self.columns, &schema, b)?],
+                    schema.clone(),
+                    None,
+                )?))
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok(Box::pin(MergeSortStream::new(
+            self.input.schema().to_schema_ref(),
+            sorted_batches,
+            self.columns.clone(),
+        )))
+    }
+}
+
+fn sort_batch(
+    columns: &Vec<String>,
+    schema: &SchemaRef,
+    batch: RecordBatch,
+) -> ArrowResult<RecordBatch> {
+    let columns_to_sort = columns
+        .iter()
+        .map(|c| -> ArrowResult<SortColumn> {
+            Ok(SortColumn {
+                values: batch.column(batch.schema().index_of(c)?).clone(),
+                options: None,
+            })
+        })
+        .collect::<ArrowResult<Vec<_>>>()?;
+    let indices = lexsort_to_indices(columns_to_sort.as_slice())?;
+
+    RecordBatch::try_new(
+        schema.clone(),
+        batch
+            .columns()
+            .iter()
+            .map(|column| {
+                take(
+                    column.as_ref(),
+                    &indices,
+                    // disable bound check overhead since indices are already generated from
+                    // the same record batch
+                    Some(TakeOptions {
+                        check_bounds: false,
+                    }),
+                )
+            })
+            .collect::<ArrowResult<Vec<ArrayRef>>>()?,
+    )
 }
 
 struct MergeSortStream {
@@ -377,6 +498,115 @@ mod tests {
         let sort_exec = Arc::new(MergeSortExec::try_new(
             Arc::new(MemoryExec::try_new(
                 &vec![vec![batch1_1, batch1_2], vec![batch2]],
+                schema.clone(),
+                None,
+            )?),
+            vec!["a".to_string(), "b".to_string()],
+        )?);
+
+        assert_eq!(DataType::UInt32, *sort_exec.schema().field(0).data_type());
+        assert_eq!(DataType::UInt64, *sort_exec.schema().field(1).data_type());
+
+        let result: Vec<RecordBatch> = collect(sort_exec).await?;
+        assert_eq!(result.len(), 3);
+
+        assert_eq!(
+            vec![
+                (None, Some("1".to_owned())),
+                (None, Some("2".to_owned())),
+                (Some("1".to_owned()), Some("1".to_owned())),
+                (Some("1".to_owned()), Some("2".to_owned())),
+                (Some("3".to_owned()), Some("2".to_owned())),
+                (Some("3".to_owned()), Some("2".to_owned())),
+                (Some("5".to_owned()), None),
+                (Some("5".to_owned()), Some("2".to_owned())),
+                (Some("5".to_owned()), Some("2".to_owned())),
+            ],
+            transform_batch_for_assert(&result[0])
+        );
+
+        assert_eq!(
+            vec![
+                (Some("7".to_owned()), Some("1".to_owned())),
+                (Some("8".to_owned()), Some("2".to_owned())),
+                (Some("8".to_owned()), Some("2".to_owned())),
+                (Some("8".to_owned()), Some("3".to_owned())),
+                (Some("9".to_owned()), None),
+            ],
+            transform_batch_for_assert(&result[1])
+        );
+
+        assert_eq!(
+            vec![(Some("10".to_owned()), None),],
+            transform_batch_for_assert(&result[2])
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn resort() -> Result<()> {
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("a", DataType::UInt32, true),
+            Field::new("b", DataType::UInt64, true),
+        ]));
+
+        // define data.
+        let batch1_1 = RecordBatch::try_new(
+            schema.clone(),
+            vec![
+                Arc::new(UInt32Array::from(vec![
+                    None,
+                    None,
+                    Some(1),
+                    Some(1),
+                    Some(3),
+                    Some(5),
+                    Some(5),
+                ])),
+                Arc::new(UInt64Array::from(vec![
+                    Some(1),
+                    Some(2),
+                    Some(1),
+                    Some(2),
+                    Some(2),
+                    None,
+                    Some(2),
+                ])),
+            ],
+        )?;
+
+        let batch1_2 = RecordBatch::try_new(
+            schema.clone(),
+            vec![
+                Arc::new(UInt32Array::from(vec![
+                    Some(7),
+                    Some(8),
+                    Some(8),
+                    Some(8),
+                    Some(9),
+                ])),
+                Arc::new(UInt64Array::from(vec![
+                    Some(1),
+                    Some(2),
+                    Some(2),
+                    Some(3),
+                    None,
+                ])),
+            ],
+        )?;
+
+        let batch2 = RecordBatch::try_new(
+            schema.clone(),
+            vec![
+                Arc::new(UInt32Array::from(vec![Some(3), Some(5), Some(10)])),
+                Arc::new(UInt64Array::from(vec![Some(2), Some(2), None])),
+            ],
+        )?;
+
+        let sort_exec = Arc::new(MergeReSortExec::try_new(
+            Arc::new(MemoryExec::try_new(
+                &vec![vec![batch1_2, batch1_1, batch2]],
                 schema.clone(),
                 None,
             )?),

@@ -37,7 +37,7 @@ use crate::physical_plan::hash_join::HashJoinExec;
 use crate::physical_plan::limit::{GlobalLimitExec, LocalLimitExec};
 use crate::physical_plan::merge::{MergeExec, UnionExec};
 use crate::physical_plan::merge_join::MergeJoinExec;
-use crate::physical_plan::merge_sort::MergeSortExec;
+use crate::physical_plan::merge_sort::{MergeReSortExec, MergeSortExec};
 use crate::physical_plan::projection::ProjectionExec;
 use crate::physical_plan::repartition::RepartitionExec;
 use crate::physical_plan::sort::SortExec;
@@ -335,12 +335,35 @@ impl DefaultPhysicalPlanner {
                     JoinType::Left => hash_utils::JoinType::Left,
                     JoinType::Right => hash_utils::JoinType::Right,
                 };
-                if self.merge_sort_node(left.clone()).is_some()
-                    && self.merge_sort_node(right.clone()).is_some()
-                {
+                if let (Some(left_node), Some(right_node)) = (
+                    self.merge_sort_node(left.clone()),
+                    self.merge_sort_node(right.clone()),
+                ) {
+                    let left_to_join =
+                        if left_node.as_any().downcast_ref::<MergeJoinExec>().is_some() {
+                            Arc::new(MergeReSortExec::try_new(
+                                left,
+                                keys.iter().map(|(l, _)| l.to_string()).collect(),
+                            )?)
+                        } else {
+                            left
+                        };
+
+                    let right_to_join = if right_node
+                        .as_any()
+                        .downcast_ref::<MergeJoinExec>()
+                        .is_some()
+                    {
+                        Arc::new(MergeReSortExec::try_new(
+                            right,
+                            keys.iter().map(|(_, r)| r.to_string()).collect(),
+                        )?)
+                    } else {
+                        right
+                    };
                     Ok(Arc::new(MergeJoinExec::try_new(
-                        left,
-                        right,
+                        left_to_join,
+                        right_to_join,
                         &keys,
                         &physical_join_type,
                     )?))
@@ -457,7 +480,9 @@ impl DefaultPhysicalPlanner {
         &self,
         node: Arc<dyn ExecutionPlan>,
     ) -> Option<Arc<dyn ExecutionPlan>> {
-        if node.as_any().downcast_ref::<MergeSortExec>().is_some() {
+        if node.as_any().downcast_ref::<MergeSortExec>().is_some()
+            || node.as_any().downcast_ref::<MergeJoinExec>().is_some()
+        {
             Some(node.clone())
         } else if let Some(aliased) = node.as_any().downcast_ref::<AliasedSchemaExec>() {
             self.merge_sort_node(aliased.children()[0].clone())
