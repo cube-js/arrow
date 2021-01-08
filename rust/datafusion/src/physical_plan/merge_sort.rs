@@ -47,7 +47,8 @@ use futures::future::join_all;
 #[derive(Debug)]
 pub struct MergeSortExec {
     input: Arc<dyn ExecutionPlan>,
-    columns: Vec<String>,
+    /// Columns to sort on
+    pub columns: Vec<String>,
 }
 
 impl MergeSortExec {

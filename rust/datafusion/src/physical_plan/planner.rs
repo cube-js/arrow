@@ -50,6 +50,7 @@ use crate::variable::VarType;
 use arrow::compute::SortOptions;
 use arrow::datatypes::SchemaRef;
 use expressions::col;
+use itertools::Itertools;
 
 /// This trait permits the `DefaultPhysicalPlanner` to create plans for
 /// user defined `ExtensionPlanNode`s
@@ -401,10 +402,27 @@ impl DefaultPhysicalPlanner {
                     .iter()
                     .map(|input| self.create_physical_plan(input, ctx_state))
                     .collect::<Result<Vec<_>>>()?;
-                Ok(AliasedSchemaExec::wrap(
-                    alias.clone(),
-                    Arc::new(MergeExec::new(Arc::new(UnionExec::new(physical_plans)))),
-                ))
+                let sorted_on = physical_plans
+                    .iter()
+                    .map(|p| {
+                        self.merge_sort_node(p.clone()).and_then(|n| {
+                            n.as_any()
+                                .downcast_ref::<MergeSortExec>()
+                                .map(|n| n.columns.clone())
+                        })
+                    })
+                    .unique()
+                    .collect::<Vec<_>>();
+                let merge_node: Arc<dyn ExecutionPlan> =
+                    if sorted_on.iter().all(|on| on.is_some()) && sorted_on.len() == 1 {
+                        Arc::new(MergeSortExec::try_new(
+                            Arc::new(UnionExec::new(physical_plans)),
+                            sorted_on[0].as_ref().unwrap().clone(),
+                        )?)
+                    } else {
+                        Arc::new(MergeExec::new(Arc::new(UnionExec::new(physical_plans))))
+                    };
+                Ok(AliasedSchemaExec::wrap(alias.clone(), merge_node))
             }
             LogicalPlan::Limit { input, n, .. } => {
                 let limit = *n;
