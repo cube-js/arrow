@@ -277,6 +277,14 @@ impl Stream for MergeJoinStream {
         let right = right_state
             .map(|(_, batch)| Ok(batch))
             .unwrap_or_else(|| self.right.empty_batch())?;
+        println!(
+            "Join on left (last: {}) at {}: {:?}",
+            self.left.is_last, left_cursor, left
+        );
+        println!(
+            "Join on right (last: {}) at {}: {:?}",
+            self.right.is_last, right_cursor, right
+        );
         let merge_result = merge_join(
             self.schema.clone(),
             &left,
@@ -289,6 +297,8 @@ impl Stream for MergeJoinStream {
             right_cursor,
             &self.join_type,
         );
+        println!("Join result: {:?}", merge_result);
+
         Poll::Ready(Some(merge_result.map(
             |(
                 (new_left_cursor, advance_left),
@@ -685,13 +695,17 @@ mod tests {
         // first part
         let stream = join.execute(0).await?;
         let batches = common::collect(stream).await?;
-        assert_eq!(batches.len(), 2);
+        assert_eq!(batches.len(), 3);
 
         let result = format_batch(&batches[0]);
         let expected = vec!["1,4,7,10,70"];
         assert_same_rows(&result, &expected);
 
         let result = format_batch(&batches[1]);
+        let expected = vec![];
+        assert_same_rows(&result, &expected);
+
+        let result = format_batch(&batches[2]);
         let expected = vec!["2,5,8,20,80", "2,5,8,30,90", "3,5,9,20,80", "3,5,9,30,90"];
         assert_same_rows(&result, &expected);
 

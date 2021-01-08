@@ -84,13 +84,12 @@ pub fn merge_join_indices<'a>(
                 }
                 if left_merge_cursor.is_valid()
                     && right_merge_cursor.is_valid()
-                    && !last_left
-                    && !last_right
-                    && (left_equal_end.row_index == left_size
-                        || right_equal_end.row_index == right_size)
+                    && (left_equal_end.row_index == left_size && !last_left
+                        || right_equal_end.row_index == right_size && !last_right)
                 {
-                    advance_left = left_equal_end.row_index == left_size;
-                    advance_right = right_equal_end.row_index == right_size;
+                    advance_left = left_equal_end.row_index == left_size && !last_left;
+                    advance_right =
+                        right_equal_end.row_index == right_size && !last_right;
                     break;
                 }
                 if left_merge_cursor.is_valid() && right_merge_cursor.is_valid() {
@@ -132,7 +131,7 @@ pub fn merge_join_indices<'a>(
         }
     }
 
-    if last_right {
+    if last_right && !advance_left && !advance_right {
         while left_merge_cursor.within_range() {
             if let MergeJoinType::Left = join_type {
                 left_indices.push(Some(left_merge_cursor.row_index as u32));
@@ -142,7 +141,7 @@ pub fn merge_join_indices<'a>(
         }
     }
 
-    if last_left {
+    if last_left && !advance_left && !advance_right {
         while right_merge_cursor.within_range() {
             if let MergeJoinType::Right = join_type {
                 left_indices.push(None);
@@ -843,6 +842,38 @@ mod tests {
                         Some(5),
                         Some(5)
                     ]))
+                )
+            )
+        )
+    }
+
+    #[test]
+    fn merge_left_join_last_right() {
+        let array_left: ArrayRef =
+            Arc::new(UInt64Array::from(vec![Some(2), Some(2), Some(2), Some(2)]));
+        let array_right: ArrayRef = Arc::new(UInt64Array::from(vec![Some(1), Some(2)]));
+        let vec_left = vec![array_left];
+        let vec_right = vec![array_right];
+
+        let result = merge_join_indices(
+            vec_left.as_slice(),
+            vec_right.as_slice(),
+            0,
+            1,
+            false,
+            true,
+            MergeJoinType::Left,
+        )
+        .unwrap();
+
+        assert_eq!(
+            result,
+            (
+                (0usize, true, Arc::new(UInt32Array::from(Vec::<u32>::new()))),
+                (
+                    1usize,
+                    false,
+                    Arc::new(UInt32Array::from(Vec::<u32>::new()))
                 )
             )
         )
