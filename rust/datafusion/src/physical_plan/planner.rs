@@ -335,6 +335,19 @@ impl DefaultPhysicalPlanner {
                     JoinType::Left => hash_utils::JoinType::Left,
                     JoinType::Right => hash_utils::JoinType::Right,
                 };
+                let left_schema = left.schema();
+                let right_schema = right.schema();
+                let keys = keys
+                    .iter()
+                    .map(|(l, r)| -> Result<_> {
+                        Ok((
+                            left_schema.lookup_field_by_string_name(l)?.qualified_name(),
+                            right_schema
+                                .lookup_field_by_string_name(r)?
+                                .qualified_name(),
+                        ))
+                    })
+                    .collect::<Result<Vec<_>>>()?;
                 if let (Some(left_node), Some(right_node)) = (
                     self.merge_sort_node(left.clone()),
                     self.merge_sort_node(right.clone()),
