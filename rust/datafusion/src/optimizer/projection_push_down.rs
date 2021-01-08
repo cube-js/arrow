@@ -22,6 +22,7 @@ use crate::error::{DataFusionError, Result};
 use crate::logical_plan::{DFField, DFSchema, DFSchemaRef, LogicalPlan, ToDFSchema};
 use crate::optimizer::optimizer::OptimizerRule;
 use crate::optimizer::utils;
+use itertools::Itertools;
 use std::{collections::HashSet, sync::Arc};
 use utils::optimize_explain;
 
@@ -74,6 +75,7 @@ fn get_projected_schema(
         .iter()
         .map(|name| schema.lookup_required_field_index(name))
         .filter_map(Result::ok)
+        .unique()
         .collect();
 
     if projection.is_empty() {

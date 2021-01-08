@@ -27,7 +27,6 @@ use arrow::{compute::can_cast_types, datatypes::DataType};
 
 use crate::error::{DataFusionError, Result};
 use crate::logical_plan::{DFField, DFSchema};
-use crate::physical_plan::expressions::Column;
 use crate::physical_plan::{
     aggregates, expressions::binary_operator_data_type, functions, udf::ScalarUDF,
 };
@@ -848,9 +847,7 @@ fn create_function_name(
 fn create_name(e: &Expr, input_schema: &DFSchema) -> Result<String> {
     match e {
         Expr::Alias(_, name) => Ok(name.clone()),
-        Expr::Column(name, relation) => {
-            Ok(Column::new_with_alias(name, relation.clone()).full_name())
-        }
+        Expr::Column(name, _) => Ok(name.to_string()),
         Expr::ScalarVariable(variable_names) => Ok(variable_names.join(".")),
         Expr::Literal(value) => Ok(format!("{:?}", value)),
         Expr::BinaryExpr { left, op, right } => {

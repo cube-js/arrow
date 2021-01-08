@@ -246,6 +246,16 @@ pub fn test_table_scan() -> Result<LogicalPlan> {
     LogicalPlanBuilder::scan_empty("test", &schema, None)?.build()
 }
 
+/// all tests share a common table
+pub fn test_table_scan_with_alias(alias: Option<String>) -> Result<LogicalPlan> {
+    let schema = Schema::new(vec![
+        Field::new("a", DataType::UInt32, false),
+        Field::new("b", DataType::UInt32, false),
+        Field::new("c", DataType::UInt32, false),
+    ]);
+    LogicalPlanBuilder::scan_empty_with_alias("test", &schema, None, alias)?.build()
+}
+
 pub fn assert_fields_eq(plan: &LogicalPlan, expected: Vec<&str>) {
     let actual: Vec<String> = plan
         .schema()

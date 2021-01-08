@@ -234,7 +234,7 @@ pub(crate) fn can_columns_satisfy_exprs(
 ///       cloning/replacement.
 /// * `Err(err)`: Any error returned by the function is returned as-is by
 ///       `clone_with_replacement()`.
-fn clone_with_replacement<F>(expr: &Expr, replacement_fn: &F) -> Result<Expr>
+pub fn clone_with_replacement<F>(expr: &Expr, replacement_fn: &F) -> Result<Expr>
 where
     F: Fn(&Expr) -> Result<Option<Expr>>,
 {

@@ -54,6 +54,7 @@ use super::utils::{
     find_aggregate_exprs, find_column_exprs, rebase_expr,
 };
 use crate::physical_plan::expressions::Column;
+use crate::sql::utils::clone_with_replacement;
 
 /// The ContextProvider trait allows the query planner to obtain meta-data about tables and
 /// functions referenced in SQL statements
@@ -722,6 +723,16 @@ impl<'a, S: ContextProvider> SqlToRel<'a, S> {
     pub fn sql_to_rex(&self, sql: &SQLExpr, schema: &DFSchema) -> Result<Expr> {
         let expr = self.sql_expr_to_logical_expr(sql)?;
         self.validate_schema_satisfies_exprs(schema, &vec![expr.clone()])?;
+        let expr = clone_with_replacement(&expr, &|expr| match expr {
+            Expr::Column(c, None) => Ok(Some(Expr::Column(
+                c.to_string(),
+                schema
+                    .field_with_unqualified_name(c)?
+                    .qualifier()
+                    .map(|a| a.to_string()),
+            ))),
+            _ => Ok(None),
+        })?;
         Ok(expr)
     }
 
@@ -1927,7 +1938,7 @@ mod tests {
             FROM person p \
             JOIN orders o ON p.id = o.customer_id \
             JOIN lineitem l ON o.item_id = l.item_id";
-        let expected = "Projection: #id, #order_id, #l_description\
+        let expected = "Projection: #p.id, #o.order_id, #l.l_description\
             \n  Join: o.item_id = l.item_id\
             \n    Join: p.id = o.customer_id\
             \n      TableScan: person projection=None\

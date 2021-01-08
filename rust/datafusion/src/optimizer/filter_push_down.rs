@@ -15,7 +15,7 @@
 //! Filter Push Down optimizer rule ensures that filters are applied as early as possible in the plan
 
 use crate::datasource::datasource::TableProviderFilterPushDown;
-use crate::logical_plan::{and, LogicalPlan};
+use crate::logical_plan::{and, JoinType, LogicalPlan};
 use crate::logical_plan::{DFSchema, Expr};
 use crate::optimizer::optimizer::OptimizerRule;
 use crate::optimizer::utils;
@@ -194,6 +194,15 @@ fn keep_filters(
         .collect::<Vec<_>>()
 }
 
+fn not_null_filters(filters: &[(Expr, HashSet<String>)]) -> bool {
+    !filters.is_empty()
+        && filters.iter().all(|(f, _)| match f {
+            Expr::IsNotNull(_) => false,
+            Expr::IsNull(_) => false,
+            _ => true,
+        })
+}
+
 /// builds a new [LogicalPlan] from `plan` by issuing new [LogicalPlan::Filter] if any of the filters
 /// in `state` depend on the columns `used_columns`.
 fn issue_filters(
@@ -341,21 +350,44 @@ fn optimize(plan: &LogicalPlan, mut state: State) -> Result<LogicalPlan> {
                 .collect::<HashSet<_>>();
             issue_filters(state, used_columns, plan)
         }
-        LogicalPlan::Join { left, right, .. } => {
+        LogicalPlan::Join {
+            left,
+            right,
+            join_type,
+            on,
+            schema,
+        } => {
             let (pushable_to_left, pushable_to_right, keep) =
                 get_join_predicates(&state, &left.schema(), &right.schema());
 
             let mut left_state = state.clone();
             left_state.filters = keep_filters(&left_state.filters, &pushable_to_left);
+            let left_not_null = not_null_filters(left_state.filters.as_slice());
             let left = optimize(left, left_state)?;
 
             let mut right_state = state.clone();
             right_state.filters = keep_filters(&right_state.filters, &pushable_to_right);
+            let right_not_null = not_null_filters(right_state.filters.as_slice());
             let right = optimize(right, right_state)?;
 
             // create a new Join with the new `left` and `right`
             let expr = utils::expressions(&plan);
-            let plan = utils::from_plan(&plan, &expr, &vec![left, right])?;
+            let convert_to_inner = match join_type {
+                JoinType::Left => right_not_null,
+                JoinType::Right => left_not_null,
+                JoinType::Inner => false,
+            };
+            let plan = if convert_to_inner {
+                LogicalPlan::Join {
+                    left: Arc::new(left),
+                    right: Arc::new(right),
+                    on: on.clone(),
+                    schema: schema.clone(),
+                    join_type: JoinType::Inner,
+                }
+            } else {
+                utils::from_plan(&plan, &expr, &vec![left, right])?
+            };
 
             if keep.0.is_empty() {
                 Ok(plan)
@@ -947,6 +979,55 @@ mod tests {
         \n      TableScan: test projection=None\
         \n  Projection: #a, #c\
         \n    TableScan: test projection=None";
+        assert_optimized_plan_eq(&plan, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn filter_three_tables() -> Result<()> {
+        let left = LogicalPlanBuilder::from(&test_table_scan_with_alias(Some(
+            "left".to_string(),
+        ))?)
+        // .project(vec![Expr::Column("a".to_owned(), Some("left".to_owned()))])?
+        .build()?;
+        let right = LogicalPlanBuilder::from(&test_table_scan_with_alias(Some(
+            "right".to_string(),
+        ))?)
+        // .project(vec![Expr::Column("c".to_owned(), Some("right".to_owned()))])?
+        .build()?;
+        let third = LogicalPlanBuilder::from(&test_table_scan_with_alias(Some(
+            "third".to_string(),
+        ))?)
+        // .project(vec![Expr::Column("b".to_owned(), Some("third".to_owned()))])?
+        .build()?;
+
+        let plan = LogicalPlanBuilder::from(&left)
+            .join(&right, JoinType::Inner, &["a"], &["c"])?
+            .join(&third, JoinType::Inner, &["a"], &["b"])?
+            .filter(
+                Expr::Column("c".to_owned(), Some("right".to_owned())).lt_eq(lit(1i64)),
+            )?
+            .build()?;
+
+        // not part of the test, just good to know:
+        assert_eq!(
+            format!("{:?}", plan),
+            "\
+            Filter: #right.c LtEq Int64(1)\
+            \n  Join: a = b\
+            \n    Join: a = c\
+            \n      TableScan: test projection=None\
+            \n      TableScan: test projection=None\
+            \n    TableScan: test projection=None"
+        );
+
+        let expected = "\
+        Join: a = b\
+        \n  Join: a = c\
+        \n    TableScan: test projection=None\
+        \n    Filter: #right.c LtEq Int64(1)\
+        \n      TableScan: test projection=None\
+        \n  TableScan: test projection=None";
         assert_optimized_plan_eq(&plan, expected);
         Ok(())
     }

@@ -100,6 +100,18 @@ impl LogicalPlanBuilder {
         Self::scan(name, provider, projection, None)
     }
 
+    /// Scan an empty data source, mainly used in tests
+    pub fn scan_empty_with_alias(
+        name: &str,
+        table_schema: &Schema,
+        projection: Option<Vec<usize>>,
+        alias: Option<String>,
+    ) -> Result<Self> {
+        let table_schema = Arc::new(table_schema.clone());
+        let provider = Arc::new(EmptyTable::new(table_schema));
+        Self::scan(name, provider, projection, alias)
+    }
+
     /// Convert a table provider into a builder with a TableScan
     pub fn scan(
         name: &str,
