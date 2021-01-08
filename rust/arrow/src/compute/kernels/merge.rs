@@ -191,15 +191,16 @@ pub fn merge_sort_indices(
         indices.push(Vec::<Option<u32>>::new());
     }
 
-    let mut merge_cursors = cursors
+    let all_cursors = cursors
         .into_iter()
         .enumerate()
         .map(|(array_index, row_index)| {
-            Reverse(MergeRowCursor::new(&comparators, array_index, row_index))
-        })
-        .collect::<BinaryHeap<_>>();
+            MergeRowCursor::new(&comparators, array_index, row_index)
+        }).collect::<Vec<_>>();
 
-    let mut finished_cursors = Vec::new();
+    let (merge_cursors, mut finished_cursors) = all_cursors.into_iter().partition::<Vec<_>, _>(|c| c.within_range());
+
+    let mut merge_cursors = merge_cursors.into_iter().map(|c| Reverse(c)).collect::<BinaryHeap<_>>();
 
     while merge_cursors.iter().all(|Reverse(c)| c.within_range())
         && !merge_cursors.is_empty()
@@ -941,6 +942,21 @@ mod tests {
         let array_1: ArrayRef = Arc::new(UInt64Array::from(vec![1, 2, 2, 3, 5, 10, 20]));
         let vec1 = vec![array_1];
         let arrays = vec![vec1.as_slice()];
+        let res = test_merge(arrays);
+
+        assert_eq!(
+            res.as_any().downcast_ref::<UInt64Array>().unwrap(),
+            &UInt64Array::from(vec![1, 2, 2, 3, 5, 10, 20])
+        )
+    }
+
+    #[test]
+    fn empty_array() {
+        let array_1: ArrayRef = Arc::new(UInt64Array::from(vec![1, 2, 2, 3, 5, 10, 20]));
+        let array_2: ArrayRef = Arc::new(UInt64Array::from(Vec::<u64>::new()));
+        let vec1 = vec![array_1];
+        let vec2 = vec![array_2];
+        let arrays = vec![vec1.as_slice(), vec2.as_slice()];
         let res = test_merge(arrays);
 
         assert_eq!(
