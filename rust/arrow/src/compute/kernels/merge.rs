@@ -191,16 +191,18 @@ pub fn merge_sort_indices(
         indices.push(Vec::<Option<u32>>::new());
     }
 
-    let all_cursors = cursors
+    let (merge_cursors, mut finished_cursors) = cursors
         .into_iter()
         .enumerate()
         .map(|(array_index, row_index)| {
             MergeRowCursor::new(&comparators, array_index, row_index)
-        }).collect::<Vec<_>>();
+        })
+        .partition::<Vec<_>, _>(|c| c.within_range());
 
-    let (merge_cursors, mut finished_cursors) = all_cursors.into_iter().partition::<Vec<_>, _>(|c| c.within_range());
-
-    let mut merge_cursors = merge_cursors.into_iter().map(|c| Reverse(c)).collect::<BinaryHeap<_>>();
+    let mut merge_cursors = merge_cursors
+        .into_iter()
+        .map(Reverse)
+        .collect::<BinaryHeap<Reverse<MergeRowCursor>>>();
 
     while merge_cursors.iter().all(|Reverse(c)| c.within_range())
         && !merge_cursors.is_empty()
