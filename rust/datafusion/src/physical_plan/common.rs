@@ -27,20 +27,20 @@ use crate::error::{DataFusionError, Result};
 
 use array::{
     BooleanArray, Float32Array, Float64Array, Int16Array, Int32Array, Int64Array,
-    Int8Array, LargeStringArray, StringArray, UInt16Array, UInt32Array, UInt64Array,
-    UInt8Array,
-};
-use array::{
     Int64Decimal0Array, Int64Decimal10Array, Int64Decimal1Array, Int64Decimal2Array,
-    Int64Decimal3Array, Int64Decimal4Array, Int64Decimal5Array,
+    Int64Decimal3Array, Int64Decimal4Array, Int64Decimal5Array, Int8Array,
+    LargeStringArray, StringArray, TimestampMicrosecondArray, TimestampNanosecondArray,
+    UInt16Array, UInt32Array, UInt64Array, UInt8Array,
 };
-use arrow::array::{TimestampMicrosecondArray, TimestampNanosecondArray};
-use arrow::datatypes::{DataType, SchemaRef, TimeUnit};
 use arrow::error::Result as ArrowResult;
 use arrow::record_batch::RecordBatch;
 use arrow::{
     array::{self, ArrayRef},
     datatypes::Schema,
+};
+use arrow::{
+    array::{build_empty_fixed_size_list_array, build_empty_list_array},
+    datatypes::{DataType, SchemaRef, TimeUnit},
 };
 use futures::{Stream, TryStreamExt};
 
@@ -191,6 +191,15 @@ pub fn create_batch_empty(schema: &Schema) -> ArrowResult<RecordBatch> {
                 TimestampNanosecondArray::from_vec(vec![] as Vec<i64>, None),
             )
                 as ArrayRef),
+            DataType::List(nested_type) => Ok(build_empty_list_array::<i32>(
+                nested_type.data_type().clone(),
+            )?),
+            DataType::LargeList(nested_type) => Ok(build_empty_list_array::<i64>(
+                nested_type.data_type().clone(),
+            )?),
+            DataType::FixedSizeList(nested_type, _) => Ok(
+                build_empty_fixed_size_list_array(nested_type.data_type().clone())?,
+            ),
             _ => Err(DataFusionError::NotImplemented(format!(
                 "Cannot convert datatype {:?} to array",
                 f.data_type()

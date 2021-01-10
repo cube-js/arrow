@@ -24,6 +24,7 @@ use std::error::Error;
 /// Many different operations in the `arrow` crate return this error type.
 #[derive(Debug)]
 pub enum ArrowError {
+    Unsupported(String),
     ExternalError(Box<dyn Error + Send + Sync>),
     MemoryError(String),
     ParseError(String),
@@ -90,6 +91,9 @@ impl From<serde_json::Error> for ArrowError {
 impl Display for ArrowError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
+            ArrowError::Unsupported(source) => {
+                write!(f, "Unsupported error: {}", &source)
+            }
             ArrowError::ExternalError(source) => write!(f, "External error: {}", &source),
             ArrowError::MemoryError(desc) => write!(f, "Memory error: {}", desc),
             ArrowError::ParseError(desc) => write!(f, "Parser error: {}", desc),
