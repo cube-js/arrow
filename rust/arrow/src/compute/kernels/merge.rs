@@ -967,6 +967,21 @@ mod tests {
         )
     }
 
+    #[test]
+    fn two_empty_arrays() {
+        let array_1: ArrayRef = Arc::new(UInt64Array::from(Vec::<u64>::new()));
+        let array_2: ArrayRef = Arc::new(UInt64Array::from(Vec::<u64>::new()));
+        let vec1 = vec![array_1];
+        let vec2 = vec![array_2];
+        let arrays = vec![vec1.as_slice(), vec2.as_slice()];
+        let res = test_merge(arrays);
+
+        assert_eq!(
+            res.as_any().downcast_ref::<UInt64Array>().unwrap(),
+            &UInt64Array::from(Vec::<u64>::new())
+        )
+    }
+
     fn test_merge(arrays: Vec<&[ArrayRef]>) -> ArrayRef {
         let result = merge_sort_indices(
             arrays.clone(),

@@ -282,7 +282,9 @@ impl MergeSortStreamState {
     }
 
     pub fn take_batch(&mut self) -> Option<ArrowResult<(usize, RecordBatch)>> {
-        if let Poll::Ready(option) = &mut self.poll_state {
+        let mut res = Poll::Pending;
+        std::mem::swap(&mut res, &mut self.poll_state);
+        if let Poll::Ready(option) = &mut res {
             option.take()
         } else {
             panic!(
@@ -293,7 +295,7 @@ impl MergeSortStreamState {
     }
 
     pub fn update_batch(&mut self, new_cursor: usize, batch: RecordBatch) {
-        if let Poll::Ready(Some(_)) = self.poll_state {
+        if let Poll::Ready(_) = self.poll_state {
             panic!(
                 "Invalid merge sort state: unexpected ready state: {:?}",
                 self.poll_state
@@ -649,6 +651,92 @@ mod tests {
         assert_eq!(
             vec![(Some("10".to_owned()), None),],
             transform_batch_for_assert(&result[2])
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn empty_batches() -> Result<()> {
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("a", DataType::UInt32, true),
+            Field::new("b", DataType::UInt64, true),
+        ]));
+
+        // define data.
+        let batch1_1 = RecordBatch::try_new(
+            schema.clone(),
+            vec![
+                Arc::new(UInt32Array::from(Vec::<u32>::new())),
+                Arc::new(UInt64Array::from(Vec::<u64>::new())),
+            ],
+        )?;
+
+        let batch1_2 = RecordBatch::try_new(
+            schema.clone(),
+            vec![
+                Arc::new(UInt32Array::from(vec![
+                    Some(7),
+                    Some(8),
+                    Some(8),
+                    Some(8),
+                    Some(9),
+                ])),
+                Arc::new(UInt64Array::from(vec![
+                    Some(1),
+                    Some(2),
+                    Some(2),
+                    Some(3),
+                    None,
+                ])),
+            ],
+        )?;
+
+        let batch2 = RecordBatch::try_new(
+            schema.clone(),
+            vec![
+                Arc::new(UInt32Array::from(Vec::<u32>::new())),
+                Arc::new(UInt64Array::from(Vec::<u64>::new())),
+            ],
+        )?;
+
+        let sort_exec = Arc::new(MergeSortExec::try_new(
+            Arc::new(MemoryExec::try_new(
+                &vec![
+                    vec![batch2.clone()],
+                    vec![batch1_1.clone(), batch1_1, batch1_2],
+                ],
+                schema.clone(),
+                None,
+            )?),
+            vec!["a".to_string(), "b".to_string()],
+        )?);
+
+        assert_eq!(DataType::UInt32, *sort_exec.schema().field(0).data_type());
+        assert_eq!(DataType::UInt64, *sort_exec.schema().field(1).data_type());
+
+        let result: Vec<RecordBatch> = collect(sort_exec).await?;
+        assert_eq!(result.len(), 3);
+
+        assert_eq!(
+            transform_batch_for_assert(&result[0]),
+            Vec::<(Option<String>, Option<String>)>::new(),
+        );
+
+        assert_eq!(
+            transform_batch_for_assert(&result[1]),
+            Vec::<(Option<String>, Option<String>)>::new(),
+        );
+
+        assert_eq!(
+            transform_batch_for_assert(&result[2]),
+            vec![
+                (Some("7".to_owned()), Some("1".to_owned())),
+                (Some("8".to_owned()), Some("2".to_owned())),
+                (Some("8".to_owned()), Some("2".to_owned())),
+                (Some("8".to_owned()), Some("3".to_owned())),
+                (Some("9".to_owned()), None),
+            ]
         );
 
         Ok(())
