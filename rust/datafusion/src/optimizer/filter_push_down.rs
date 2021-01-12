@@ -195,8 +195,7 @@ fn keep_filters(
 }
 
 fn not_null_filters(filters: &[(Expr, HashSet<String>)]) -> bool {
-    !filters.is_empty()
-        && filters.iter().all(|(f, _)| !matches!(f, Expr::IsNull(_)))
+    !filters.is_empty() && filters.iter().all(|(f, _)| !matches!(f, Expr::IsNull(_)))
 }
 
 /// builds a new [LogicalPlan] from `plan` by issuing new [LogicalPlan::Filter] if any of the filters
