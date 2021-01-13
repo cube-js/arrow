@@ -34,9 +34,9 @@ use arrow::{
 };
 use arrow::{
     array::{
-        Array, BooleanArray, Date32Array, Float32Array, Float64Array, Int16Array,
-        Int32Array, Int64Array, Int8Array, LargeStringArray, ListArray, StringArray,
-        UInt16Array, UInt32Array, UInt64Array, UInt8Array,
+        Array, BinaryArray, BooleanArray, Date32Array, Float32Array, Float64Array,
+        Int16Array, Int32Array, Int64Array, Int8Array, LargeStringArray, ListArray,
+        StringArray, UInt16Array, UInt32Array, UInt64Array, UInt8Array,
     },
     datatypes::DateUnit,
 };
@@ -73,6 +73,8 @@ pub enum ScalarValue {
     UInt32(Option<u32>),
     /// unsigned 64bit int
     UInt64(Option<u64>),
+    /// Binary array
+    Binary(Option<Vec<u8>>),
     /// utf-8 encoded string.
     Utf8(Option<String>),
     /// utf-8 encoded string representing a LargeString's arrow type.
@@ -173,6 +175,7 @@ impl ScalarValue {
             }
             ScalarValue::Float32(_) => DataType::Float32,
             ScalarValue::Float64(_) => DataType::Float64,
+            ScalarValue::Binary(_) => DataType::Binary,
             ScalarValue::Utf8(_) => DataType::Utf8,
             ScalarValue::LargeUtf8(_) => DataType::LargeUtf8,
             ScalarValue::List(_, data_type) => {
@@ -275,6 +278,9 @@ impl ScalarValue {
             ScalarValue::TimeNanosecond(e) => {
                 Arc::new(TimestampNanosecondArray::from_opt_vec(vec![*e], None))
             }
+            ScalarValue::Binary(e) => {
+                Arc::new(BinaryArray::from(vec![e.as_deref(); size]))
+            }
             ScalarValue::Utf8(e) => Arc::new(StringArray::from(vec![e.as_deref(); size])),
             ScalarValue::LargeUtf8(e) => {
                 Arc::new(LargeStringArray::from(vec![e.as_deref(); size]))
@@ -337,6 +343,7 @@ impl ScalarValue {
             DataType::Timestamp(TimeUnit::Nanosecond, None) => {
                 typed_cast!(array, index, TimestampNanosecondArray, TimeNanosecond)
             }
+            DataType::Binary => typed_cast!(array, index, BinaryArray, Binary),
             DataType::Utf8 => typed_cast!(array, index, StringArray, Utf8),
             DataType::LargeUtf8 => typed_cast!(array, index, LargeStringArray, LargeUtf8),
             DataType::List(nested_type) => {
@@ -522,6 +529,7 @@ impl TryFrom<&DataType> for ScalarValue {
             DataType::UInt16 => ScalarValue::UInt16(None),
             DataType::UInt32 => ScalarValue::UInt32(None),
             DataType::UInt64 => ScalarValue::UInt64(None),
+            DataType::Binary => ScalarValue::Binary(None),
             DataType::Utf8 => ScalarValue::Utf8(None),
             DataType::LargeUtf8 => ScalarValue::LargeUtf8(None),
             DataType::List(ref nested_type) => {
@@ -565,6 +573,13 @@ impl fmt::Display for ScalarValue {
             ScalarValue::UInt64(e) => format_option!(f, e)?,
             ScalarValue::TimeMicrosecond(e) => format_option!(f, e)?,
             ScalarValue::TimeNanosecond(e) => format_option!(f, e)?,
+            ScalarValue::Binary(e) => match e {
+                Some(d) => {
+                    write!(f, "0x")?;
+                    d.iter().try_for_each(|x| write!(f, "{:02X}", x))?
+                }
+                None => write!(f, "NULL")?,
+            },
             ScalarValue::Utf8(e) => format_option!(f, e)?,
             ScalarValue::LargeUtf8(e) => format_option!(f, e)?,
             ScalarValue::List(e, _) => match e {
@@ -601,6 +616,7 @@ impl fmt::Debug for ScalarValue {
             ScalarValue::UInt64(_) => write!(f, "UInt64({})", self),
             ScalarValue::TimeMicrosecond(_) => write!(f, "TimeMicrosecond({})", self),
             ScalarValue::TimeNanosecond(_) => write!(f, "TimeNanosecond({})", self),
+            ScalarValue::Binary(_) => write!(f, "ByteArray({})", self),
             ScalarValue::Utf8(None) => write!(f, "Utf8({})", self),
             ScalarValue::Utf8(Some(_)) => write!(f, "Utf8(\"{}\")", self),
             ScalarValue::LargeUtf8(None) => write!(f, "LargeUtf8({})", self),
@@ -654,5 +670,13 @@ mod tests {
         assert_eq!(prim_array.value(2), 101);
 
         Ok(())
+    }
+
+    #[test]
+    fn scalar_binary_fmt() {
+        assert_eq!(
+            "0x012034FF",
+            format!("{}", ScalarValue::Binary(Some(vec![0x1, 0x20, 0x34, 0xff])))
+        );
     }
 }

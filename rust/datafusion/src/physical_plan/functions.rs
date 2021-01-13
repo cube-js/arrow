@@ -644,6 +644,14 @@ mod tests {
             ScalarValue::from(1u32),
             DataType::UInt64,
             "PrimitiveArray<UInt64>\n[\n  1,\n  1,\n]",
+        )?;
+
+        // arrays of binary type
+        generic_test_array(
+            ScalarValue::Binary(Some(vec![1, 2])),
+            ScalarValue::Binary(Some(vec![3, 4])),
+            DataType::Binary,
+            "BinaryArray\n[\n  [1, 2],\n  [3, 4],\n]",
         )
     }
 }
