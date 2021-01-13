@@ -198,6 +198,47 @@ fn not_null_filters(filters: &[(Expr, HashSet<String>)]) -> bool {
     !filters.is_empty() && filters.iter().all(|(f, _)| !matches!(f, Expr::IsNull(_)))
 }
 
+fn mirror_scalar_filters(
+    from_filters: &[(Expr, HashSet<String>)],
+    to_filters: &[(Expr, HashSet<String>)],
+    from_on: Vec<String>,
+    to_on: Vec<String>,
+    to_schema: &DFSchema,
+) -> Result<Vec<(Expr, HashSet<String>)>> {
+    Ok(from_filters
+        .iter()
+        .filter(|(_, columns)| from_on.iter().all(|f| columns.contains(f)))
+        .map(|(f, _)| -> Result<_> {
+            let expr = rewrite(
+                &f,
+                &from_on
+                    .iter()
+                    .zip(to_on.iter())
+                    .map(|(from, to)| -> Result<_> {
+                        let field = to_schema.lookup_field_by_string_name(to)?;
+                        Ok((
+                            from.to_string(),
+                            Expr::Column(
+                                field.name().to_string(),
+                                field.qualifier().cloned(),
+                            ),
+                        ))
+                    })
+                    .collect::<Result<HashMap<String, Expr>>>()?,
+            )?;
+            if to_filters.iter().any(|(to_filter, _)| to_filter == &expr) {
+                return Ok(None);
+            }
+            let mut new_columns = HashSet::new();
+            utils::expr_to_column_names(&expr, &mut new_columns)?;
+            Ok(Some((expr, new_columns)))
+        })
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
+        .filter_map(|v| v)
+        .collect())
+}
+
 /// builds a new [LogicalPlan] from `plan` by issuing new [LogicalPlan::Filter] if any of the filters
 /// in `state` depend on the columns `used_columns`.
 fn issue_filters(
@@ -358,11 +399,32 @@ fn optimize(plan: &LogicalPlan, mut state: State) -> Result<LogicalPlan> {
             let mut left_state = state.clone();
             left_state.filters = keep_filters(&left_state.filters, &pushable_to_left);
             let left_not_null = not_null_filters(left_state.filters.as_slice());
-            let left = optimize(left, left_state)?;
 
             let mut right_state = state.clone();
             right_state.filters = keep_filters(&right_state.filters, &pushable_to_right);
             let right_not_null = not_null_filters(right_state.filters.as_slice());
+
+            if matches!(join_type, JoinType::Left | JoinType::Inner) {
+                left_state.filters.append(&mut mirror_scalar_filters(
+                    right_state.filters.as_slice(),
+                    left_state.filters.as_slice(),
+                    on.iter().map(|(_, r)| r.to_string()).collect(),
+                    on.iter().map(|(l, _)| l.to_string()).collect(),
+                    left.schema(),
+                )?);
+            }
+
+            if matches!(join_type, JoinType::Right | JoinType::Inner) {
+                right_state.filters.append(&mut mirror_scalar_filters(
+                    left_state.filters.as_slice(),
+                    right_state.filters.as_slice(),
+                    on.iter().map(|(l, _)| l.to_string()).collect(),
+                    on.iter().map(|(_, r)| r.to_string()).collect(),
+                    right.schema(),
+                )?);
+            }
+
+            let left = optimize(left, left_state)?;
             let right = optimize(right, right_state)?;
 
             // create a new Join with the new `left` and `right`
@@ -997,8 +1059,8 @@ mod tests {
         .build()?;
 
         let plan = LogicalPlanBuilder::from(&left)
-            .join(&right, JoinType::Inner, &["a"], &["c"])?
-            .join(&third, JoinType::Inner, &["a"], &["b"])?
+            .join(&right, JoinType::Inner, &["left.a"], &["right.c"])?
+            .join(&third, JoinType::Inner, &["left.a"], &["third.b"])?
             .filter(
                 Expr::Column("c".to_owned(), Some("right".to_owned())).lt_eq(lit(1i64)),
             )?
@@ -1009,17 +1071,18 @@ mod tests {
             format!("{:?}", plan),
             "\
             Filter: #right.c LtEq Int64(1)\
-            \n  Join: a = b\
-            \n    Join: a = c\
+            \n  Join: left.a = third.b\
+            \n    Join: left.a = right.c\
             \n      TableScan: test projection=None\
             \n      TableScan: test projection=None\
             \n    TableScan: test projection=None"
         );
 
         let expected = "\
-        Join: a = b\
-        \n  Join: a = c\
-        \n    TableScan: test projection=None\
+        Join: left.a = third.b\
+        \n  Join: left.a = right.c\
+        \n    Filter: #left.a LtEq Int64(1)\
+        \n      TableScan: test projection=None\
         \n    Filter: #right.c LtEq Int64(1)\
         \n      TableScan: test projection=None\
         \n  TableScan: test projection=None";
