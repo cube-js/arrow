@@ -68,6 +68,7 @@ pub fn array(args: &[ArrayRef]) -> Result<ArrayRef> {
     }
 
     match args[0].data_type() {
+        DataType::Binary => array!(args, BinaryArray, BinaryBuilder),
         DataType::Utf8 => array!(args, StringArray, StringBuilder),
         DataType::LargeUtf8 => array!(args, LargeStringArray, LargeStringBuilder),
         DataType::Boolean => array!(args, BooleanArray, BooleanBuilder),
@@ -131,6 +132,7 @@ pub static SUPPORTED_ARRAY_TYPES: &[DataType] = &[
     DataType::Int64Decimal(10),
     DataType::Float32,
     DataType::Float64,
+    DataType::Binary,
     DataType::Utf8,
     DataType::LargeUtf8,
 ];
