@@ -173,6 +173,13 @@ where
         DataType::Duration(TimeUnit::Nanosecond) => {
             downcast_take!(DurationNanosecondType, values, indices)
         }
+        DataType::Binary => {
+            let values = values
+                .as_any()
+                .downcast_ref::<GenericBinaryArray<i32>>()
+                .unwrap();
+            Ok(Arc::new(take_binary::<i32, _>(values, indices)?))
+        }
         DataType::Utf8 => {
             let values = values
                 .as_any()
@@ -417,7 +424,55 @@ where
     Ok(BooleanArray::from(Arc::new(data)))
 }
 
+/// Implemented by GenericStringArray and GenericBinaryArray to share implementation of take_*.
+trait VarlengthArray: Array + From<ArrayDataRef> {
+    type OffsetSize: Zero + AddAssign + OffsetSizeTrait;
+
+    fn value(&self, i: usize) -> &[u8];
+    fn new_builder(&self) -> ArrayDataBuilder;
+}
+
+impl<OffsetSize: BinaryOffsetSizeTrait> VarlengthArray
+    for GenericBinaryArray<OffsetSize>
+{
+    type OffsetSize = OffsetSize;
+
+    fn value(&self, i: usize) -> &[u8] {
+        self.value(i)
+    }
+
+    fn new_builder(&self) -> ArrayDataBuilder {
+        ArrayData::builder(<OffsetSize>::DATA_TYPE)
+    }
+}
+
+fn take_binary<OffsetSize, IndexType>(
+    array: &GenericBinaryArray<OffsetSize>,
+    indices: &PrimitiveArray<IndexType>,
+) -> Result<GenericBinaryArray<OffsetSize>>
+where
+    OffsetSize: Zero + AddAssign + BinaryOffsetSizeTrait,
+    IndexType: ArrowNumericType,
+    IndexType::Native: ToPrimitive,
+{
+    take_varlength(array, indices)
+}
+
 /// `take` implementation for string arrays
+impl<OffsetSize: StringOffsetSizeTrait> VarlengthArray
+    for GenericStringArray<OffsetSize>
+{
+    type OffsetSize = OffsetSize;
+
+    fn value(&self, i: usize) -> &[u8] {
+        self.value(i).as_bytes()
+    }
+
+    fn new_builder(&self) -> ArrayDataBuilder {
+        ArrayData::builder(<OffsetSize>::DATA_TYPE)
+    }
+}
+
 fn take_string<OffsetSize, IndexType>(
     array: &GenericStringArray<OffsetSize>,
     indices: &PrimitiveArray<IndexType>,
@@ -427,15 +482,27 @@ where
     IndexType: ArrowNumericType,
     IndexType::Native: ToPrimitive,
 {
+    take_varlength(array, indices)
+}
+
+fn take_varlength<ArrayType, IndexType>(
+    array: &ArrayType,
+    indices: &PrimitiveArray<IndexType>,
+) -> Result<ArrayType>
+where
+    ArrayType: VarlengthArray,
+    IndexType: ArrowNumericType,
+    IndexType::Native: ToPrimitive,
+{
     let data_len = indices.len();
 
-    let bytes_offset = (data_len + 1) * std::mem::size_of::<OffsetSize>();
+    let bytes_offset = (data_len + 1) * std::mem::size_of::<ArrayType::OffsetSize>();
     let mut offsets_buffer = MutableBuffer::new(bytes_offset);
     offsets_buffer.resize(bytes_offset);
 
     let offsets = offsets_buffer.typed_data_mut();
     let mut values = Vec::with_capacity(bytes_offset);
-    let mut length_so_far = OffsetSize::zero();
+    let mut length_so_far = ArrayType::OffsetSize::zero();
     offsets[0] = length_so_far;
 
     let nulls;
@@ -447,8 +514,8 @@ where
 
             let s = array.value(index);
 
-            length_so_far += OffsetSize::from_usize(s.len()).unwrap();
-            values.extend_from_slice(s.as_bytes());
+            length_so_far += ArrayType::OffsetSize::from_usize(s.len()).unwrap();
+            values.extend_from_slice(s);
             *offset = length_so_far;
         }
         nulls = None
@@ -466,8 +533,8 @@ where
             if array.is_valid(index) {
                 let s = array.value(index);
 
-                length_so_far += OffsetSize::from_usize(s.len()).unwrap();
-                values.extend_from_slice(s.as_bytes());
+                length_so_far += ArrayType::OffsetSize::from_usize(s.len()).unwrap();
+                values.extend_from_slice(s);
             } else {
                 bit_util::unset_bit(null_slice, i);
             }
@@ -484,8 +551,8 @@ where
 
                 let s = array.value(index);
 
-                length_so_far += OffsetSize::from_usize(s.len()).unwrap();
-                values.extend_from_slice(s.as_bytes());
+                length_so_far += ArrayType::OffsetSize::from_usize(s.len()).unwrap();
+                values.extend_from_slice(s);
             }
             *offset = length_so_far;
         }
@@ -504,8 +571,8 @@ where
             if array.is_valid(index) && indices.is_valid(i) {
                 let s = array.value(index);
 
-                length_so_far += OffsetSize::from_usize(s.len()).unwrap();
-                values.extend_from_slice(s.as_bytes());
+                length_so_far += ArrayType::OffsetSize::from_usize(s.len()).unwrap();
+                values.extend_from_slice(s);
             } else {
                 // set null bit
                 bit_util::unset_bit(null_slice, i);
@@ -521,14 +588,15 @@ where
         };
     }
 
-    let mut data = ArrayData::builder(<OffsetSize as StringOffsetSizeTrait>::DATA_TYPE)
+    let mut data = array
+        .new_builder() //  ArrayData::builder(<OffsetSize as StringOffsetSizeTrait>::DATA_TYPE)
         .len(data_len)
         .add_buffer(offsets_buffer.into())
         .add_buffer(Buffer::from(values));
     if let Some(null_buffer) = nulls {
         data = data.null_bit_buffer(null_buffer);
     }
-    Ok(GenericStringArray::<OffsetSize>::from(data.build()))
+    Ok(ArrayType::from(data.build()))
 }
 
 /// `take` implementation for list arrays
