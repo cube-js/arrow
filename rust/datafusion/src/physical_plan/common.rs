@@ -26,11 +26,11 @@ use super::{RecordBatchStream, SendableRecordBatchStream};
 use crate::error::{DataFusionError, Result};
 
 use array::{
-    BooleanArray, Float32Array, Float64Array, Int16Array, Int32Array, Int64Array,
-    Int64Decimal0Array, Int64Decimal10Array, Int64Decimal1Array, Int64Decimal2Array,
-    Int64Decimal3Array, Int64Decimal4Array, Int64Decimal5Array, Int8Array,
-    LargeStringArray, StringArray, TimestampMicrosecondArray, TimestampNanosecondArray,
-    UInt16Array, UInt32Array, UInt64Array, UInt8Array,
+    BinaryArray, BooleanArray, Float32Array, Float64Array, Int16Array, Int32Array,
+    Int64Array, Int64Decimal0Array, Int64Decimal10Array, Int64Decimal1Array,
+    Int64Decimal2Array, Int64Decimal3Array, Int64Decimal4Array, Int64Decimal5Array,
+    Int8Array, LargeStringArray, StringArray, TimestampMicrosecondArray,
+    TimestampNanosecondArray, UInt16Array, UInt32Array, UInt64Array, UInt8Array,
 };
 use arrow::error::Result as ArrowResult;
 use arrow::record_batch::RecordBatch;
@@ -173,6 +173,9 @@ pub fn create_batch_empty(schema: &Schema) -> ArrowResult<RecordBatch> {
             }
             DataType::UInt8 => {
                 Ok(Arc::new(UInt8Array::from(vec![] as Vec<u8>)) as ArrayRef)
+            }
+            DataType::Binary => {
+                Ok(Arc::new(BinaryArray::from(vec![] as Vec<&[u8]>)) as ArrayRef)
             }
             DataType::Utf8 => {
                 Ok(Arc::new(StringArray::from(vec![] as Vec<&str>)) as ArrayRef)
