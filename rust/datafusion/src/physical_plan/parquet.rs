@@ -662,6 +662,7 @@ fn build_statistics_array(
     };
 
     let (data_size, arrow_type) = match first_group_stats {
+        ParquetStatistics::Boolean(_) => (std::mem::size_of::<bool>(), DataType::Boolean),
         ParquetStatistics::Int32(_) => (std::mem::size_of::<i32>(), DataType::Int32),
         ParquetStatistics::Int64(_) => (std::mem::size_of::<i64>(), DataType::Int64),
         ParquetStatistics::Float(_) => (std::mem::size_of::<f32>(), DataType::Float32),
@@ -695,6 +696,18 @@ fn build_statistics_array(
         for maybe_string in string_statistics {
             match maybe_string {
                 Some(string_value) => builder.append_value(string_value).unwrap(),
+                None => builder.append_null().unwrap(),
+            };
+        }
+        return Arc::new(builder.finish());
+    }
+
+    if arrow_type == DataType::Boolean {
+        // Boolean arrays are stored as bitmaps, so they require special handling.
+        let mut builder = arrow::array::BooleanBuilder::new(statistics_count);
+        for maybe_bool in statistics {
+            match maybe_bool {
+                Some(v) => builder.append_value(v[0] != 0).unwrap(),
                 None => builder.append_null().unwrap(),
             };
         }
@@ -899,6 +912,7 @@ mod tests {
     use arrow::array::{Int32Array, StringArray};
     use futures::StreamExt;
     use parquet::basic::Type as PhysicalType;
+    use parquet::data_type::Int96;
     use parquet::schema::types::SchemaDescPtr;
 
     #[test]
@@ -998,6 +1012,35 @@ mod tests {
     }
 
     #[test]
+    fn build_statistics_array_boolean() {
+        // build row group metadata array
+        let s1 = ParquetStatistics::boolean(None, Some(true), None, 0, false);
+        let s2 = ParquetStatistics::boolean(Some(false), Some(true), None, 0, false);
+        let s3 = ParquetStatistics::boolean(Some(true), Some(true), None, 0, false);
+        let statistics = vec![Some(&s1), Some(&s2), Some(&s3)];
+
+        let statistics_array =
+            build_statistics_array(&statistics, StatisticsType::Min, &DataType::Boolean);
+        let bool_array = statistics_array
+            .as_any()
+            .downcast_ref::<BooleanArray>()
+            .unwrap();
+        let bool_vec = bool_array.into_iter().collect::<Vec<_>>();
+        assert_eq!(bool_vec, vec![None, Some(false), Some(true)]);
+
+        let statistics_array =
+            build_statistics_array(&statistics, StatisticsType::Max, &DataType::Boolean);
+        let bool_array = statistics_array
+            .as_any()
+            .downcast_ref::<BooleanArray>()
+            .unwrap();
+        let bool_vec = bool_array.into_iter().collect::<Vec<_>>();
+        // here the first max value is None and not the Some(true) value which was actually set
+        // because the min value is None.
+        assert_eq!(bool_vec, vec![None, Some(true), Some(true)]);
+    }
+
+    #[test]
     fn build_statistics_array_utf8() {
         // build row group metadata array
         let s1 = ParquetStatistics::byte_array(None, Some("10".into()), None, 0, false);
@@ -1059,11 +1102,23 @@ mod tests {
 
     #[test]
     fn build_statistics_array_unsupported_type() {
-        // boolean is not currently a supported type for statistics
-        let s1 = ParquetStatistics::boolean(Some(false), Some(true), None, 0, false);
-        let s2 = ParquetStatistics::boolean(Some(false), Some(true), None, 0, false);
+        // int96 is not currently a supported type for statistics
+        let s1 = ParquetStatistics::int96(
+            Some(Int96::new()),
+            Some(Int96::new()),
+            None,
+            0,
+            false,
+        );
+        let s2 = ParquetStatistics::int96(
+            Some(Int96::new()),
+            Some(Int96::new()),
+            None,
+            0,
+            false,
+        );
         let statistics = vec![Some(&s1), Some(&s2)];
-        let data_type = DataType::Boolean;
+        let data_type = DataType::FixedSizeBinary(std::mem::size_of::<Int96>() as i32);
         let statistics_array =
             build_statistics_array(&statistics, StatisticsType::Min, &data_type);
         assert_eq!(statistics_array.len(), statistics.len());
@@ -1360,6 +1415,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore] // Disabled in our fork since Boolean type is supported.
     fn row_group_predicate_builder_unsupported_type() -> Result<()> {
         use crate::logical_plan::{col, lit};
         // test row group predicate with unsupported statistics type (boolean)
@@ -1402,6 +1458,53 @@ mod tests {
         // when a null array is generated for a statistics column,
         // because the null values propagate to the end result, making the predicate result undefined
         assert_eq!(row_group_filter, vec![true, true]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn row_group_predicate_builder_boolean_type() -> Result<()> {
+        // This is an addition in the Cube Dev fork. Originally copied from the
+        // `row_group_predicate_builder_unsupported_type` and modified to properly test booleans.
+        use crate::logical_plan::{col, lit};
+        let expr = col("c1").gt(lit(15)).and(col("c2").eq(lit(true)));
+        let schema = Schema::new(vec![
+            Field::new("c1", DataType::Int32, false),
+            Field::new("c2", DataType::Boolean, false),
+        ]);
+        let predicate_builder = RowGroupPredicateBuilder::try_new(&expr, schema)?;
+
+        let schema_descr = get_test_schema_descr(vec![
+            ("c1", PhysicalType::INT32),
+            ("c2", PhysicalType::BOOLEAN),
+        ]);
+
+        let new_metadata = |min_i, max_i, min_b, max_b| {
+            get_row_group_meta_data(
+                &schema_descr,
+                vec![
+                    ParquetStatistics::int32(Some(min_i), Some(max_i), None, 0, false),
+                    ParquetStatistics::boolean(Some(min_b), Some(max_b), None, 0, false),
+                ],
+            )
+        };
+        let rgm1 = new_metadata(1, 10, false, true);
+        let rgm2 = new_metadata(11, 20, false, true);
+        let rgm3 = new_metadata(1, 20, false, false);
+        let rgm4 = new_metadata(1, 20, true, true);
+
+        let row_group_metadata = vec![rgm1, rgm2, rgm3, rgm4];
+        let row_group_predicate =
+            predicate_builder.build_row_group_predicate(&row_group_metadata);
+        let row_group_filter = row_group_metadata
+            .iter()
+            .enumerate()
+            .map(|(i, g)| row_group_predicate(g, i))
+            .collect::<Vec<_>>();
+        // We should filter:
+        //   - the first based on the int column.
+        //   - the third based on the bool column.
+        assert_eq!(row_group_filter, vec![false, true, false, true]);
 
         Ok(())
     }
