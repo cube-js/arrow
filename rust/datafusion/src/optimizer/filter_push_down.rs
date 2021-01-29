@@ -15,6 +15,7 @@
 //! Filter Push Down optimizer rule ensures that filters are applied as early as possible in the plan
 
 use crate::datasource::datasource::TableProviderFilterPushDown;
+use crate::error::DataFusionError;
 use crate::logical_plan::{and, JoinType, LogicalPlan};
 use crate::logical_plan::{DFSchema, Expr};
 use crate::optimizer::optimizer::OptimizerRule;
@@ -480,7 +481,10 @@ fn optimize(plan: &LogicalPlan, mut state: State) -> Result<LogicalPlan> {
                 }
 
                 if add_to_provider {
-                    new_filters.push(filter_expr.clone());
+                    // Underlying filters get passed to `TableProvider::scan` unchanged later.
+                    // `TableProvider::scan` does not get information about aliasing or table names
+                    // so we strip the qualifiers from fields here.
+                    new_filters.push(strip_qualifiers(&filter_expr, projected_schema)?);
                 }
             }
 
@@ -508,6 +512,28 @@ fn optimize(plan: &LogicalPlan, mut state: State) -> Result<LogicalPlan> {
             issue_filters(state, used_columns, plan)
         }
     }
+}
+
+fn strip_qualifiers(e: &Expr, schema: &DFSchema) -> Result<Expr> {
+    if let Expr::Column(name, Some(qual)) = &e {
+        // Sanity check: the field must be unambigous and present in the schema.
+        let f = schema.field_with_unqualified_name(&name)?;
+        if f.qualifier() != Some(&qual) {
+            return Err(DataFusionError::Plan(format!(
+                "The field has has qualifier {:?}, expected {:?}",
+                f.qualifier(),
+                qual
+            )));
+        }
+        return Ok(Expr::Column(name.clone(), None));
+    }
+
+    let mut parts = utils::expr_sub_expressions(&e)?;
+    for p in &mut parts {
+        *p = strip_qualifiers(&p, &schema)?;
+    }
+
+    utils::rewrite_expression(&e, &parts)
 }
 
 impl OptimizerRule for FilterPushDown {
