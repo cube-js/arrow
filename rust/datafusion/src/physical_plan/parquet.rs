@@ -664,7 +664,10 @@ fn build_statistics_array(
     let (data_size, arrow_type) = match first_group_stats {
         ParquetStatistics::Boolean(_) => (std::mem::size_of::<bool>(), DataType::Boolean),
         ParquetStatistics::Int32(_) => (std::mem::size_of::<i32>(), DataType::Int32),
-        ParquetStatistics::Int64(_) => (std::mem::size_of::<i64>(), DataType::Int64),
+        ParquetStatistics::Int64(_) => match data_type {
+            DataType::Int64Decimal(_) => (std::mem::size_of::<i64>(), data_type.clone()),
+            _ => (std::mem::size_of::<i64>(), DataType::Int64),
+        },
         ParquetStatistics::Float(_) => (std::mem::size_of::<f32>(), DataType::Float32),
         ParquetStatistics::Double(_) => (std::mem::size_of::<f64>(), DataType::Float64),
         ParquetStatistics::ByteArray(_) if data_type == &DataType::Utf8 => {
@@ -1458,6 +1461,47 @@ mod tests {
         // when a null array is generated for a statistics column,
         // because the null values propagate to the end result, making the predicate result undefined
         assert_eq!(row_group_filter, vec![true, true]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn row_group_predicate_builder_decimal_type() -> Result<()> {
+        // This is an addition in the Cube Dev fork. Originally copied from the
+        // `row_group_predicate_builder_unsupported_type` and modified to properly test booleans.
+        use crate::logical_plan::{col, lit};
+        let expr = col("c").gt(lit(15));
+        let schema = Schema::new(vec![Field::new("c", DataType::Int64Decimal(2), false)]);
+        let predicate_builder = RowGroupPredicateBuilder::try_new(&expr, schema)?;
+
+        let schema_descr = get_test_schema_descr(vec![("c", PhysicalType::INT64)]);
+
+        let new_metadata = |min_i: i64, max_i: i64| {
+            // Note that we multiply by `100` to convert into int64decimal representation.
+            get_row_group_meta_data(
+                &schema_descr,
+                vec![ParquetStatistics::int64(
+                    Some(100 * min_i),
+                    Some(100 * max_i),
+                    None,
+                    0,
+                    false,
+                )],
+            )
+        };
+        let rgm1 = new_metadata(1, 10);
+        let rgm2 = new_metadata(11, 20);
+        let rgm3 = new_metadata(1, 20);
+
+        let row_group_metadata = vec![rgm1, rgm2, rgm3];
+        let row_group_predicate =
+            predicate_builder.build_row_group_predicate(&row_group_metadata);
+        let row_group_filter = row_group_metadata
+            .iter()
+            .enumerate()
+            .map(|(i, g)| row_group_predicate(g, i))
+            .collect::<Vec<_>>();
+        assert_eq!(row_group_filter, vec![false, true, true]);
 
         Ok(())
     }
