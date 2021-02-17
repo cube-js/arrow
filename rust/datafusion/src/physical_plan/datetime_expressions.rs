@@ -25,6 +25,11 @@ use arrow::{
     buffer::Buffer,
     datatypes::{DataType, TimeUnit, ToByteSlice},
 };
+use chrono::format::Fixed::{Nanosecond as FixedNanosecond, TimezoneOffsetColon};
+use chrono::format::Item::{Fixed, Literal, Numeric};
+use chrono::format::Numeric::Nanosecond;
+use chrono::format::Pad::Zero;
+use chrono::format::{Item, Parsed};
 use chrono::prelude::*;
 use chrono::Duration;
 
@@ -91,45 +96,92 @@ pub fn string_to_timestamp_nanos(s: &str) -> Result<i64> {
     // separating the date and time with a space ' ' rather than 'T' to be
     // (more) compatible with Apache Spark SQL
 
-    // timezone offset, using ' ' as a separator
-    // Example: 2020-09-08 13:42:29.190855-05:00
-    if let Ok(ts) = DateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%.f%:z") {
-        return Ok(ts.timestamp_nanos());
+    // We parse the date and time prefix first to share work between all the different formats.
+    let mut rest = s;
+    let mut p;
+    let separator_is_space;
+    match try_parse_prefix(&mut rest) {
+        Some(ParsedPrefix {
+            result,
+            separator_is_space: s,
+        }) => {
+            p = result;
+            separator_is_space = s;
+        }
+        None => {
+            return Err(DataFusionError::Execution(format!(
+                "Error parsing '{}' as timestamp",
+                s
+            )));
+        }
     }
 
-    // with an explicit Z, using ' ' as a separator
-    // Example: 2020-09-08 13:42:29Z
-    if let Ok(ts) = Utc.datetime_from_str(s, "%Y-%m-%d %H:%M:%S%.fZ") {
-        return Ok(ts.timestamp_nanos());
+    if separator_is_space {
+        // timezone offset, using ' ' as a separator
+        // Example: 2020-09-08 13:42:29.190855-05:00
+        // Full format string: "%Y-%m-%d %H:%M:%S%.f%:z".
+        const FORMAT1: [Item; 2] = [Fixed(FixedNanosecond), Fixed(TimezoneOffsetColon)];
+        if let Ok(ts) = chrono::format::parse(&mut p, rest, FORMAT1.iter())
+            .and_then(|()| p.to_datetime())
+        {
+            return Ok(ts.timestamp_nanos());
+        }
+
+        // with an explicit Z, using ' ' as a separator
+        // Example: 2020-09-08 13:42:29Z
+        // Full format string: "%Y-%m-%d %H:%M:%S%.fZ".
+        const FORMAT2: [Item; 2] = [Fixed(FixedNanosecond), Literal("Z")];
+        if let Ok(ts) = chrono::format::parse(&mut p, rest, FORMAT2.iter())
+            .and_then(|()| p.to_datetime_with_timezone(&Utc))
+        {
+            return Ok(ts.timestamp_nanos());
+        }
+
+        // without a timezone specifier as a local time, using ' ' as a separator
+        // Example: 2020-09-08 13:42:29.190855
+        const FORMAT5: [Item; 2] = [Literal("."), Numeric(Nanosecond, Zero)];
+        // Full format string: "%Y-%m-%d %H:%M:%S.%f".
+        if let Ok(ts) = chrono::format::parse(&mut p, rest, FORMAT5.iter())
+            .and_then(|()| p.to_naive_datetime_with_offset(0))
+        {
+            return naive_datetime_to_timestamp(s, ts);
+        }
+
+        // without a timezone specifier as a local time, using ' ' as a
+        // separator, no fractional seconds
+        // Example: 2020-09-08 13:42:29
+        // Full format string: "%Y-%m-%d %H:%M:%S".
+        if rest.is_empty() {
+            if let Ok(ts) = p.to_naive_datetime_with_offset(0) {
+                return naive_datetime_to_timestamp(s, ts);
+            }
+        }
     }
 
     // Support timestamps without an explicit timezone offset, again
     // to be compatible with what Apache Spark SQL does.
+    if !separator_is_space
+    /* i.e. separator == b'T' */
+    {
+        // without a timezone specifier as a local time, using T as a separator
+        // Example: 2020-09-08T13:42:29.190855
+        // Full format string: "%Y-%m-%dT%H:%M:%S.%f".
+        const FORMAT3: [Item; 2] = [Literal("."), Numeric(Nanosecond, Zero)];
+        if let Ok(ts) = chrono::format::parse(&mut p, rest, FORMAT3.iter())
+            .and_then(|()| p.to_naive_datetime_with_offset(0))
+        {
+            return naive_datetime_to_timestamp(s, ts);
+        }
 
-    // without a timezone specifier as a local time, using T as a separator
-    // Example: 2020-09-08T13:42:29.190855
-    if let Ok(ts) = NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S.%f") {
-        return naive_datetime_to_timestamp(s, ts);
-    }
-
-    // without a timezone specifier as a local time, using T as a
-    // separator, no fractional seconds
-    // Example: 2020-09-08T13:42:29
-    if let Ok(ts) = NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S") {
-        return naive_datetime_to_timestamp(s, ts);
-    }
-
-    // without a timezone specifier as a local time, using ' ' as a separator
-    // Example: 2020-09-08 13:42:29.190855
-    if let Ok(ts) = NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S.%f") {
-        return naive_datetime_to_timestamp(s, ts);
-    }
-
-    // without a timezone specifier as a local time, using ' ' as a
-    // separator, no fractional seconds
-    // Example: 2020-09-08 13:42:29
-    if let Ok(ts) = NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S") {
-        return naive_datetime_to_timestamp(s, ts);
+        // without a timezone specifier as a local time, using T as a
+        // separator, no fractional seconds
+        // Example: 2020-09-08T13:42:29
+        // Full format string: "%Y-%m-%dT%H:%M:%S".
+        if rest.is_empty() {
+            if let Ok(ts) = p.to_naive_datetime_with_offset(0) {
+                return naive_datetime_to_timestamp(s, ts);
+            }
+        }
     }
 
     // Note we don't pass along the error message from the underlying
@@ -141,6 +193,86 @@ pub fn string_to_timestamp_nanos(s: &str) -> Result<i64> {
         "Error parsing '{}' as timestamp",
         s
     )))
+}
+
+#[must_use]
+fn try_parse_num(s: &mut &[u8]) -> Option<i64> {
+    if s.is_empty() {
+        return None;
+    }
+
+    let mut i;
+    if s[0] == b'-' {
+        i = 1
+    } else {
+        i = 0;
+    }
+
+    while i < s.len() && b'0' <= s[i] && s[i] <= b'9' {
+        i += 1
+    }
+
+    let res = unsafe { std::str::from_utf8_unchecked(&s[0..i]) }
+        .parse()
+        .ok();
+    *s = &s[i..];
+    return res;
+}
+
+#[must_use]
+fn try_consume(s: &mut &[u8], c: u8) -> Option<()> {
+    if s.is_empty() || s[0] != c {
+        return None;
+    }
+    *s = &s[1..];
+    Some(())
+}
+
+struct ParsedPrefix {
+    result: Parsed,
+    separator_is_space: bool, // When false, the separator is 'T'.
+}
+
+/// Parses YYYY-MM-DD(T| )HH:MM:SS.
+fn try_parse_prefix(s: &mut &str) -> Option<ParsedPrefix> {
+    let mut p = Parsed::new();
+
+    let mut rest = s.as_bytes();
+    let year = try_parse_num(&mut rest)?;
+    try_consume(&mut rest, b'-')?;
+    let month = try_parse_num(&mut rest)?;
+    try_consume(&mut rest, b'-')?;
+    let day = try_parse_num(&mut rest)?;
+    if rest.is_empty() {
+        return None;
+    }
+
+    let separator_is_space;
+    match rest[0] {
+        b' ' => separator_is_space = true,
+        b'T' => separator_is_space = false,
+        _ => return None,
+    }
+
+    rest = &rest[1..];
+    let hour = try_parse_num(&mut rest)?;
+    try_consume(&mut rest, b':')?;
+    let minute = try_parse_num(&mut rest)?;
+    try_consume(&mut rest, b':')?;
+    let second = try_parse_num(&mut rest)?;
+
+    p.set_year(year).ok()?;
+    p.set_month(month).ok()?;
+    p.set_day(day).ok()?;
+    p.set_hour(hour).ok()?;
+    p.set_minute(minute).ok()?;
+    p.set_second(second).ok()?;
+
+    *s = unsafe { std::str::from_utf8_unchecked(rest) };
+    Some(ParsedPrefix {
+        result: p,
+        separator_is_space,
+    })
 }
 
 /// Converts the naive datetime (which has no specific timezone) to a
