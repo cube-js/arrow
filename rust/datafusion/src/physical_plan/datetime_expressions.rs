@@ -278,11 +278,7 @@ fn try_parse_prefix(s: &mut &str) -> Option<ParsedPrefix> {
 /// Converts the naive datetime (which has no specific timezone) to a
 /// nanosecond epoch timestamp relative to UTC.
 fn naive_datetime_to_timestamp(_s: &str, datetime: NaiveDateTime) -> Result<i64> {
-    let l = Local {};
-
-    Ok(l.from_utc_datetime(&datetime)
-        .with_timezone(&Utc)
-        .timestamp_nanos())
+    Ok(Utc.from_utc_datetime(&datetime).timestamp_nanos())
 }
 
 /// convert an array of strings into `Timestamp(Nanosecond, None)`
