@@ -37,7 +37,7 @@ pub(crate) enum GroupByScalar {
     Int32(i32),
     Int64(i64),
     // TODO
-    Utf8(Box<String>),
+    Utf8(String),
     Boolean(bool),
     TimeMicrosecond(i64),
     TimeNanosecond(i64),
@@ -65,7 +65,7 @@ impl TryFrom<&ScalarValue> for GroupByScalar {
             ScalarValue::UInt16(Some(v)) => GroupByScalar::UInt16(*v),
             ScalarValue::UInt32(Some(v)) => GroupByScalar::UInt32(*v),
             ScalarValue::UInt64(Some(v)) => GroupByScalar::UInt64(*v),
-            ScalarValue::Utf8(Some(v)) => GroupByScalar::Utf8(Box::new(v.clone())),
+            ScalarValue::Utf8(Some(v)) => GroupByScalar::Utf8(v.clone()),
             ScalarValue::Int64Decimal(Some(v), size) => {
                 GroupByScalar::Int64Decimal(*v, *size)
             }
@@ -213,6 +213,6 @@ mod tests {
 
     #[test]
     fn size_of_group_by_scalar() {
-        assert_eq!(std::mem::size_of::<GroupByScalar>(), 16);
+        assert_eq!(std::mem::size_of::<GroupByScalar>(), 32);
     }
 }
