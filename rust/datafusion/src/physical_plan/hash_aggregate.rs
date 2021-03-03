@@ -71,6 +71,8 @@ use super::{
 
 use crate::logical_plan::{DFSchema, DFSchemaRef};
 use crate::scalar::ScalarValue;
+use smallvec::smallvec;
+use smallvec::SmallVec;
 use std::convert::TryFrom;
 
 /// Hash aggregate modes
@@ -292,14 +294,9 @@ fn group_aggregate_batch(
     // create vector large enough to hold the grouping key
     // this is an optimization to avoid allocating `key` on every row.
     // it will be overwritten on every iteration of the loop below
-    let mut group_by_values = Vec::with_capacity(group_values.len());
-    for _ in 0..group_values.len() {
-        group_by_values.push(GroupByScalar::UInt32(0));
-    }
+    let mut group_by_values = smallvec![GroupByScalar::UInt32(0); group_values.len()];
 
-    let mut group_by_values = group_by_values.into_boxed_slice();
-
-    let mut key = Vec::with_capacity(group_values.len());
+    let mut key = SmallVec::new();
 
     // 1.1 construct the key from the group values
     // 1.2 construct the mapping key if it does not exist
@@ -332,9 +329,12 @@ fn group_aggregate_batch(
                 let accumulator_set = create_accumulators(aggr_expr).unwrap();
                 batch_keys.append_value(&key).expect("must not fail");
                 let _ = create_group_by_values(&group_values, row, &mut group_by_values);
+                let mut taken_values =
+                    smallvec![GroupByScalar::UInt32(0); group_values.len()];
+                std::mem::swap(&mut taken_values, &mut group_by_values);
                 (
                     key.clone(),
-                    (group_by_values.clone(), accumulator_set, vec![row as u32]),
+                    (taken_values, accumulator_set, smallvec![row as u32]),
                 )
             });
     }
@@ -418,7 +418,7 @@ fn group_aggregate_batch(
 pub(crate) fn create_key(
     group_by_keys: &[ArrayRef],
     row: usize,
-    vec: &mut Vec<u8>,
+    vec: &mut KeyVec,
 ) -> Result<()> {
     vec.clear();
     for col in group_by_keys {
@@ -457,7 +457,7 @@ pub(crate) fn create_key(
             }
             DataType::Int16 => {
                 let array = col.as_any().downcast_ref::<Int16Array>().unwrap();
-                vec.extend(array.value(row).to_le_bytes().iter());
+                vec.extend_from_slice(&array.value(row).to_le_bytes());
             }
             DataType::Int32 => {
                 let array = col.as_any().downcast_ref::<Int32Array>().unwrap();
@@ -596,9 +596,17 @@ impl GroupedHashAggregateStream {
     }
 }
 
-type AccumulatorSet = Vec<Box<dyn Accumulator>>;
-type Accumulators =
-    HashMap<Vec<u8>, (Box<[GroupByScalar]>, AccumulatorSet, Vec<u32>), RandomState>;
+type KeyVec = SmallVec<[u8; 64]>;
+type AccumulatorSet = SmallVec<[Box<dyn Accumulator>; 2]>;
+type Accumulators = HashMap<
+    KeyVec,
+    (
+        SmallVec<[GroupByScalar; 2]>,
+        AccumulatorSet,
+        SmallVec<[u32; 4]>,
+    ),
+    RandomState,
+>;
 
 impl Stream for GroupedHashAggregateStream {
     type Item = ArrowResult<RecordBatch>;
@@ -787,7 +795,7 @@ fn aggregate_batch(
             }
             Ok(accum)
         })
-        .collect::<Result<Vec<_>>>()
+        .collect::<Result<SmallVec<_>>>()
 }
 
 impl Stream for HashAggregateStream {
@@ -894,7 +902,7 @@ fn create_accumulators(
     aggr_expr
         .iter()
         .map(|expr| expr.create_accumulator())
-        .collect::<Result<Vec<_>>>()
+        .collect::<Result<SmallVec<_>>>()
 }
 
 fn create_builder(s: &ScalarValue) -> Box<dyn ArrayBuilder> {
@@ -1298,7 +1306,7 @@ fn finalize_aggregation(
 pub(crate) fn create_group_by_values(
     group_by_keys: &[ArrayRef],
     row: usize,
-    vec: &mut Box<[GroupByScalar]>,
+    vec: &mut SmallVec<[GroupByScalar; 2]>,
 ) -> Result<()> {
     for i in 0..group_by_keys.len() {
         let col = &group_by_keys[i];
