@@ -113,6 +113,10 @@ impl ExecutionPlan for FilterExec {
         }
     }
 
+    fn output_sort_order(&self) -> Option<Vec<usize>> {
+        self.input.output_sort_order()
+    }
+
     async fn execute(&self, partition: usize) -> Result<SendableRecordBatchStream> {
         Ok(Box::pin(FilterExecStream {
             schema: self.input.schema().to_schema_ref(),

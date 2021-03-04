@@ -36,7 +36,7 @@ use arrow::{array::ArrayRef, error::ArrowError};
 
 use super::{RecordBatchStream, SendableRecordBatchStream};
 use crate::error::{DataFusionError, Result};
-use crate::physical_plan::expressions::PhysicalSortExpr;
+use crate::physical_plan::expressions::{Column, PhysicalSortExpr};
 use crate::physical_plan::{common, Distribution, ExecutionPlan, Partitioning};
 
 use crate::logical_plan::DFSchemaRef;
@@ -135,6 +135,15 @@ impl ExecutionPlan for SortExec {
         let input = self.input.execute(0).await?;
 
         Ok(Box::pin(SortStream::new(input, self.expr.clone())))
+    }
+
+    fn output_sort_order(&self) -> Option<Vec<usize>> {
+        let mut order = Vec::with_capacity(self.expr.len());
+        for s in &self.expr {
+            let col = s.expr.as_any().downcast_ref::<Column>()?;
+            order.push(self.schema().index_of(col.unwrap().name()).ok()?);
+        }
+        Some(order)
     }
 }
 

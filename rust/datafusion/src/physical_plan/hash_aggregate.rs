@@ -70,7 +70,9 @@ use super::{
 };
 
 use crate::logical_plan::{DFSchema, DFSchemaRef};
+use crate::physical_plan::sorted_aggregate::SortedAggState;
 use crate::scalar::ScalarValue;
+use itertools::Itertools;
 use smallvec::smallvec;
 use smallvec::SmallVec;
 use std::convert::TryFrom;
@@ -84,9 +86,19 @@ pub enum AggregateMode {
     Final,
 }
 
+/// Defines which aggregation algorithm is used
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum AggregateStrategy {
+    /// Build a hash map with accumulators. General-purpose
+    Hash,
+    /// Aggregate group on-the-fly for sorted inputs. Faster than hash, but requires sorted input
+    InplaceSorted,
+}
+
 /// Hash aggregate execution plan
 #[derive(Debug)]
 pub struct HashAggregateExec {
+    strategy: AggregateStrategy,
     /// Aggregation mode (full, partial)
     mode: AggregateMode,
     /// Grouping expressions
@@ -135,6 +147,7 @@ fn create_schema(
 impl HashAggregateExec {
     /// Create a new hash aggregate execution plan
     pub fn try_new(
+        strategy: AggregateStrategy,
         mode: AggregateMode,
         group_expr: Vec<(Arc<dyn PhysicalExpr>, String)>,
         aggr_expr: Vec<Arc<dyn AggregateExpr>>,
@@ -145,6 +158,7 @@ impl HashAggregateExec {
         let schema = Arc::new(schema);
 
         Ok(HashAggregateExec {
+            strategy,
             mode,
             group_expr,
             aggr_expr,
@@ -214,6 +228,7 @@ impl ExecutionPlan for HashAggregateExec {
             )))
         } else {
             Ok(Box::pin(GroupedHashAggregateStream::new(
+                self.strategy,
                 self.mode,
                 self.schema.to_schema_ref(),
                 group_expr,
@@ -229,6 +244,7 @@ impl ExecutionPlan for HashAggregateExec {
     ) -> Result<Arc<dyn ExecutionPlan>> {
         match children.len() {
             1 => Ok(Arc::new(HashAggregateExec::try_new(
+                self.strategy,
                 self.mode,
                 self.group_expr.clone(),
                 self.aggr_expr.clone(),
@@ -237,6 +253,15 @@ impl ExecutionPlan for HashAggregateExec {
             _ => Err(DataFusionError::Internal(
                 "HashAggregateExec wrong number of children".to_string(),
             )),
+        }
+    }
+
+    fn output_sort_order(&self) -> Option<Vec<usize>> {
+        match self.strategy {
+            AggregateStrategy::Hash => None,
+            AggregateStrategy::InplaceSorted => {
+                Some((0..self.group_expr.len()).collect_vec())
+            }
         }
     }
 }
@@ -567,6 +592,7 @@ async fn compute_grouped_hash_aggregate(
 impl GroupedHashAggregateStream {
     /// Create a new HashAggregateStream
     pub fn new(
+        strategy: AggregateStrategy,
         mode: AggregateMode,
         schema: SchemaRef,
         group_expr: Vec<Arc<dyn PhysicalExpr>>,
@@ -577,14 +603,28 @@ impl GroupedHashAggregateStream {
 
         let schema_clone = schema.clone();
         tokio::spawn(async move {
-            let result = compute_grouped_hash_aggregate(
-                mode,
-                schema_clone,
-                group_expr,
-                aggr_expr,
-                input,
-            )
-            .await;
+            let result = match strategy {
+                AggregateStrategy::Hash => {
+                    compute_grouped_hash_aggregate(
+                        mode,
+                        schema_clone,
+                        group_expr,
+                        aggr_expr,
+                        input,
+                    )
+                    .await
+                }
+                AggregateStrategy::InplaceSorted => {
+                    compute_grouped_sorted_aggregate(
+                        mode,
+                        schema_clone,
+                        group_expr,
+                        aggr_expr,
+                        input,
+                    )
+                    .await
+                }
+            };
             tx.send(result)
         });
 
@@ -597,7 +637,7 @@ impl GroupedHashAggregateStream {
 }
 
 type KeyVec = SmallVec<[u8; 64]>;
-type AccumulatorSet = SmallVec<[Box<dyn Accumulator>; 2]>;
+pub(crate) type AccumulatorSet = SmallVec<[Box<dyn Accumulator>; 2]>;
 type Accumulators = HashMap<
     KeyVec,
     (
@@ -852,34 +892,15 @@ fn create_batch_from_map(
     let mut key_columns: Vec<Box<dyn ArrayBuilder>> = Vec::with_capacity(num_group_expr);
     let mut value_columns = Vec::new();
     for (_, (group_by_values, accumulator_set, _)) in accumulators {
-        let add_key_columns = key_columns.is_empty();
-        // 2.
-        for i in 0..num_group_expr {
-            match &group_by_values[i] {
-                // Optimization to avoid allocation on conversion to ScalarValue.
-                GroupByScalar::Utf8(str) => {
-                    if add_key_columns {
-                        key_columns.push(Box::new(StringBuilder::new(0)));
-                    }
-                    key_columns[i]
-                        .as_any_mut()
-                        .downcast_mut::<StringBuilder>()
-                        .unwrap()
-                        .append_value(str)?;
-                }
-                v => {
-                    let scalar = &ScalarValue::from(v);
-                    if add_key_columns {
-                        key_columns.push(create_builder(&scalar));
-                    }
-                    append_value(&mut *key_columns[i], &scalar);
-                }
-            }
-        }
-
-        // 3.
-        finalize_aggregation_into(accumulator_set, mode, &mut value_columns)
-            .map_err(DataFusionError::into_arrow_external_error)?;
+        // 2 and 3.
+        write_group_result_row(
+            *mode,
+            group_by_values,
+            accumulator_set,
+            &mut key_columns,
+            &mut value_columns,
+        )
+        .map_err(DataFusionError::into_arrow_external_error)?;
     }
     // 4.
     let batch = if !value_columns.is_empty() {
@@ -896,7 +917,40 @@ fn create_batch_from_map(
     Ok(batch)
 }
 
-fn create_accumulators(
+pub(crate) fn write_group_result_row(
+    mode: AggregateMode,
+    group_by_values: &[GroupByScalar],
+    accumulator_set: &AccumulatorSet,
+    key_columns: &mut Vec<Box<dyn ArrayBuilder>>,
+    value_columns: &mut Vec<Box<dyn ArrayBuilder>>,
+) -> Result<()> {
+    let add_key_columns = key_columns.is_empty();
+    for i in 0..group_by_values.len() {
+        match &group_by_values[i] {
+            // Optimization to avoid allocation on conversion to ScalarValue.
+            GroupByScalar::Utf8(str) => {
+                if add_key_columns {
+                    key_columns.push(Box::new(StringBuilder::new(0)));
+                }
+                key_columns[i]
+                    .as_any_mut()
+                    .downcast_mut::<StringBuilder>()
+                    .unwrap()
+                    .append_value(str)?;
+            }
+            v => {
+                let scalar = &ScalarValue::from(v);
+                if add_key_columns {
+                    key_columns.push(create_builder(&scalar));
+                }
+                append_value(&mut *key_columns[i], &scalar)?;
+            }
+        }
+    }
+    finalize_aggregation_into(&accumulator_set, &mode, value_columns)
+}
+
+pub(crate) fn create_accumulators(
     aggr_expr: &Vec<Arc<dyn AggregateExpr>>,
 ) -> Result<AccumulatorSet> {
     aggr_expr
@@ -905,7 +959,7 @@ fn create_accumulators(
         .collect::<Result<SmallVec<_>>>()
 }
 
-fn create_builder(s: &ScalarValue) -> Box<dyn ArrayBuilder> {
+pub(crate) fn create_builder(s: &ScalarValue) -> Box<dyn ArrayBuilder> {
     match s {
         ScalarValue::Boolean(_) => Box::new(BooleanBuilder::new(0)),
         ScalarValue::Float32(_) => Box::new(Float32Builder::new(0)),
@@ -1236,7 +1290,7 @@ fn append_value(b: &mut dyn ArrayBuilder, v: &ScalarValue) -> Result<()> {
 
 /// adds aggregation results into columns, creating the required builders when necessary.
 /// final value (mode = Final) or states (mode = Partial)
-fn finalize_aggregation_into(
+pub(crate) fn finalize_aggregation_into(
     accumulators: &AccumulatorSet,
     mode: &AggregateMode,
     columns: &mut Vec<Box<dyn ArrayBuilder>>,
@@ -1779,6 +1833,33 @@ pub(crate) fn create_group_by_values(
         }
     }
     Ok(())
+}
+
+async fn compute_grouped_sorted_aggregate(
+    mode: AggregateMode,
+    schema: SchemaRef,
+    group_expr: Vec<Arc<dyn PhysicalExpr>>,
+    aggr_expr: Vec<Arc<dyn AggregateExpr>>,
+    mut input: SendableRecordBatchStream,
+) -> ArrowResult<RecordBatch> {
+    // the expressions to evaluate the batch, one vec of expressions per aggregation
+    let aggregate_expressions = aggregate_expressions(&aggr_expr, &mode)
+        .map_err(DataFusionError::into_arrow_external_error)?;
+
+    // iterate over all input batches and update the accumulators
+    let mut state = SortedAggState::new();
+    while let Some(batch) = input.next().await {
+        let batch = batch?;
+        let group_values = evaluate(&group_expr, &batch)
+            .map_err(DataFusionError::into_arrow_external_error)?;
+        let aggr_input_values = evaluate_many(&aggregate_expressions, &batch)
+            .map_err(DataFusionError::into_arrow_external_error)?;
+
+        state
+            .add_batch(mode, &aggr_expr, &group_values, &aggr_input_values)
+            .map_err(DataFusionError::into_arrow_external_error)?;
+    }
+    state.finish(mode, schema)
 }
 
 #[cfg(test)]

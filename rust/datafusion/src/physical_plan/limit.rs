@@ -110,6 +110,10 @@ impl ExecutionPlan for GlobalLimitExec {
         }
     }
 
+    fn output_sort_order(&self) -> Option<Vec<usize>> {
+        self.input.output_sort_order()
+    }
+
     async fn execute(&self, partition: usize) -> Result<SendableRecordBatchStream> {
         // GlobalLimitExec has a single output partition
         if 0 != partition {
@@ -189,6 +193,10 @@ impl ExecutionPlan for LocalLimitExec {
                 "LocalLimitExec wrong number of children".to_string(),
             )),
         }
+    }
+
+    fn output_sort_order(&self) -> Option<Vec<usize>> {
+        self.input.output_sort_order()
     }
 
     async fn execute(&self, _: usize) -> Result<SendableRecordBatchStream> {

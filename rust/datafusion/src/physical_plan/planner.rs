@@ -32,7 +32,9 @@ use crate::physical_plan::expressions::{
     AliasedSchemaExec, CaseExpr, Column, ConstArray, Literal, PhysicalSortExpr,
 };
 use crate::physical_plan::filter::FilterExec;
-use crate::physical_plan::hash_aggregate::{AggregateMode, HashAggregateExec};
+use crate::physical_plan::hash_aggregate::{
+    AggregateMode, AggregateStrategy, HashAggregateExec,
+};
 use crate::physical_plan::hash_join::HashJoinExec;
 use crate::physical_plan::limit::{GlobalLimitExec, LocalLimitExec};
 use crate::physical_plan::merge::{MergeExec, UnionExec};
@@ -218,12 +220,30 @@ impl DefaultPhysicalPlanner {
                     })
                     .collect::<Result<Vec<_>>>()?;
 
-                let initial_aggr = Arc::new(HashAggregateExec::try_new(
-                    AggregateMode::Partial,
-                    groups.clone(),
-                    aggregates.clone(),
-                    input_exec,
-                )?);
+                let strategy = if input_sorted_by_group_key(input_exec.as_ref(), &groups)
+                {
+                    AggregateStrategy::InplaceSorted
+                } else {
+                    AggregateStrategy::Hash
+                };
+
+                let mut initial_aggr: Arc<dyn ExecutionPlan> =
+                    Arc::new(HashAggregateExec::try_new(
+                        strategy,
+                        AggregateMode::Partial,
+                        groups.clone(),
+                        aggregates.clone(),
+                        input_exec,
+                    )?);
+
+                if strategy == AggregateStrategy::InplaceSorted
+                    && initial_aggr.output_partitioning().partition_count() != 1
+                {
+                    initial_aggr = Arc::new(MergeSortExec::try_new(
+                        initial_aggr,
+                        groups.iter().map(|(_, name)| name.clone()).collect(),
+                    )?);
+                }
 
                 let final_group: Vec<Arc<dyn PhysicalExpr>> =
                     (0..groups.len()).map(|i| col(&groups[i].1)).collect();
@@ -231,6 +251,7 @@ impl DefaultPhysicalPlanner {
                 // construct a second aggregation, keeping the final column name equal to the first aggregation
                 // and the expressions corresponding to the respective aggregate
                 Ok(Arc::new(HashAggregateExec::try_new(
+                    strategy,
                     AggregateMode::Final,
                     final_group
                         .iter()
@@ -860,6 +881,44 @@ impl DefaultPhysicalPlanner {
             options,
         })
     }
+}
+
+fn input_sorted_by_group_key(
+    input: &dyn ExecutionPlan,
+    group_key: &[(Arc<dyn PhysicalExpr>, String)],
+) -> bool {
+    // We check the group key is a prefix of the sort key.
+    let sort_key = input.output_sort_order();
+    if sort_key.is_none() {
+        return false;
+    }
+    let sort_key = sort_key.unwrap();
+    // Tracks which elements of sort key are used in the group key.
+    let mut sort_key_hit = vec![false; sort_key.len()];
+    for (g, _) in group_key {
+        let col = g.as_any().downcast_ref::<Column>();
+        if col.is_none() {
+            return false;
+        }
+        let input_col = input.schema().index_of(col.unwrap().name());
+        if input_col.is_err() {
+            return false;
+        }
+        let input_col = input_col.unwrap();
+        let sort_key_pos = sort_key.iter().find_position(|i| **i == input_col);
+        if sort_key_pos.is_none() {
+            return false;
+        }
+        sort_key_hit[sort_key_pos.unwrap().0] = true;
+    }
+    // At this point all elements of the group key mapped into some column of the sort key.
+    // This checks the group key is mapped into a prefix of the sort key.
+    sort_key_hit
+        .iter()
+        .skip_while(|present| **present)
+        .skip_while(|present| !**present)
+        .next()
+        .is_none()
 }
 
 fn tuple_err<T, R>(value: (Result<T>, Result<R>)) -> Result<(T, R)> {

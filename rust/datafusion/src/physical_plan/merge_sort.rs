@@ -42,6 +42,7 @@ use crate::physical_plan::memory::MemoryStream;
 use arrow::compute::kernels::merge::merge_sort_indices;
 use async_trait::async_trait;
 use futures::future::join_all;
+use itertools::Itertools;
 
 /// Sort execution plan
 #[derive(Debug)]
@@ -84,6 +85,15 @@ impl ExecutionPlan for MergeSortExec {
             children[0].clone(),
             self.columns.clone(),
         )?))
+    }
+
+    fn output_sort_order(&self) -> Option<Vec<usize>> {
+        Some(
+            self.columns
+                .iter()
+                .map(|c| self.schema().index_of(&c))
+                .try_collect()?,
+        )
     }
 
     async fn execute(&self, partition: usize) -> Result<SendableRecordBatchStream> {

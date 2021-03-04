@@ -81,6 +81,13 @@ pub trait ExecutionPlan: Debug + Send + Sync {
         &self,
         children: Vec<Arc<dyn ExecutionPlan>>,
     ) -> Result<Arc<dyn ExecutionPlan>>;
+    /// If the output is sorted, return indices of the sort key columns in the output schema.
+    /// Useful for optimizations during planning.
+    /// Note that this does guarantee the exact ordering inside each of the columns, e.g. the values
+    /// may end up in ascending or descending order, nulls can go first or last.
+    fn output_sort_order(&self) -> Option<Vec<usize>> {
+        None
+    }
 
     /// creates an iterator
     async fn execute(&self, partition: usize) -> Result<SendableRecordBatchStream>;
@@ -297,6 +304,7 @@ pub mod planner;
 pub mod projection;
 pub mod repartition;
 pub mod sort;
+mod sorted_aggregate;
 pub mod string_expressions;
 pub mod type_coercion;
 pub mod udaf;
