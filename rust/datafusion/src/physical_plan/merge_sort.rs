@@ -35,14 +35,13 @@ use arrow::{array::ArrayRef, error::ArrowError};
 use super::{RecordBatchStream, SendableRecordBatchStream};
 use crate::error::{DataFusionError, Result};
 use crate::physical_plan::expressions::if_then_else;
-use crate::physical_plan::{ExecutionPlan, Partitioning};
+use crate::physical_plan::{ExecutionPlan, OptimizerHints, Partitioning};
 
 use crate::logical_plan::DFSchemaRef;
 use crate::physical_plan::memory::MemoryStream;
 use arrow::compute::kernels::merge::merge_sort_indices;
 use async_trait::async_trait;
 use futures::future::join_all;
-use itertools::Itertools;
 
 /// Sort execution plan
 #[derive(Debug)]
@@ -92,13 +91,15 @@ impl ExecutionPlan for MergeSortExec {
         )?))
     }
 
-    fn output_sort_order(&self) -> Result<Option<Vec<usize>>> {
-        Ok(Some(
-            self.columns
+    fn output_hints(&self) -> OptimizerHints {
+        OptimizerHints {
+            single_value_columns: self.input.output_hints().single_value_columns,
+            sort_order: self
+                .columns
                 .iter()
-                .map(|c| self.schema().index_of(&c))
-                .try_collect()?,
-        ))
+                .map(|c| self.schema().index_of(&c).ok())
+                .collect(),
+        }
     }
 
     async fn execute(&self, partition: usize) -> Result<SendableRecordBatchStream> {

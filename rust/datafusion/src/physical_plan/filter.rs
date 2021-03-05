@@ -25,7 +25,7 @@ use std::task::{Context, Poll};
 
 use super::{RecordBatchStream, SendableRecordBatchStream};
 use crate::error::{DataFusionError, Result};
-use crate::physical_plan::{ExecutionPlan, Partitioning, PhysicalExpr};
+use crate::physical_plan::{ExecutionPlan, OptimizerHints, Partitioning, PhysicalExpr};
 use arrow::array::BooleanArray;
 use arrow::compute::filter_record_batch;
 use arrow::datatypes::{DataType, SchemaRef};
@@ -34,7 +34,8 @@ use arrow::record_batch::RecordBatch;
 
 use async_trait::async_trait;
 
-use crate::logical_plan::DFSchemaRef;
+use crate::logical_plan::{DFSchemaRef, Operator};
+use crate::physical_plan::expressions::{BinaryExpr, Column, Literal};
 use futures::stream::{Stream, StreamExt};
 
 /// FilterExec evaluates a boolean predicate against all input batches to determine which rows to
@@ -113,8 +114,27 @@ impl ExecutionPlan for FilterExec {
         }
     }
 
-    fn output_sort_order(&self) -> Result<Option<Vec<usize>>> {
-        self.input.output_sort_order()
+    fn output_hints(&self) -> OptimizerHints {
+        let inputs_hints = self.input.output_hints();
+
+        let mut single_value_columns = inputs_hints.single_value_columns;
+        let schema = self.schema().to_schema_ref();
+        for c in extract_single_value_columns(self.predicate.as_ref()) {
+            if let Some(i) = c
+                .lookup_field(&schema)
+                .ok()
+                .and_then(|f| schema.index_of(f.name()).ok())
+            {
+                single_value_columns.push(i)
+            }
+        }
+        single_value_columns.sort_unstable();
+        single_value_columns.dedup();
+
+        OptimizerHints {
+            sort_order: inputs_hints.sort_order,
+            single_value_columns,
+        }
     }
 
     async fn execute(&self, partition: usize) -> Result<SendableRecordBatchStream> {
@@ -123,6 +143,42 @@ impl ExecutionPlan for FilterExec {
             predicate: self.predicate.clone(),
             input: self.input.execute(partition).await?,
         }))
+    }
+}
+
+fn extract_single_value_columns(predicate: &dyn PhysicalExpr) -> Vec<&Column> {
+    let mut columns = Vec::new();
+    extract_single_value_columns_impl(predicate, &mut columns);
+    columns
+}
+
+fn extract_single_value_columns_impl<'a>(
+    predicate: &'a dyn PhysicalExpr,
+    out: &mut Vec<&'a Column>,
+) {
+    // TODO: more sophisticated expressions.
+    let is_constant = |e: &dyn PhysicalExpr| e.as_any().is::<Literal>();
+
+    let predicate = predicate.as_any();
+    if let Some(binary) = predicate.downcast_ref::<BinaryExpr>() {
+        match binary.op() {
+            Operator::And => {
+                extract_single_value_columns_impl(binary.left().as_ref(), out);
+                extract_single_value_columns_impl(binary.right().as_ref(), out);
+            }
+            Operator::Eq => {
+                let mut left = binary.left();
+                let mut right = binary.right();
+                if !left.as_any().is::<Column>() {
+                    std::mem::swap(&mut left, &mut right);
+                }
+                let left = left.as_any().downcast_ref::<Column>();
+                if left.is_some() && is_constant(right.as_ref()) {
+                    out.push(left.unwrap());
+                }
+            }
+            _ => {}
+        }
     }
 }
 

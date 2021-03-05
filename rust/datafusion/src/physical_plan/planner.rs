@@ -220,11 +220,13 @@ impl DefaultPhysicalPlanner {
                     })
                     .collect::<Result<Vec<_>>>()?;
 
-                let strategy = if input_sorted_by_group_key(input_exec.as_ref(), &groups)?
+                let strategy;
+                if !groups.is_empty()
+                    && input_sorted_by_group_key(input_exec.as_ref(), &groups)
                 {
-                    AggregateStrategy::InplaceSorted
+                    strategy = AggregateStrategy::InplaceSorted
                 } else {
-                    AggregateStrategy::Hash
+                    strategy = AggregateStrategy::Hash
                 };
 
                 let mut initial_aggr: Arc<dyn ExecutionPlan> =
@@ -238,6 +240,7 @@ impl DefaultPhysicalPlanner {
 
                 if strategy == AggregateStrategy::InplaceSorted
                     && initial_aggr.output_partitioning().partition_count() != 1
+                    && !groups.is_empty()
                 {
                     initial_aggr = Arc::new(MergeSortExec::try_new(
                         initial_aggr,
@@ -886,39 +889,47 @@ impl DefaultPhysicalPlanner {
 fn input_sorted_by_group_key(
     input: &dyn ExecutionPlan,
     group_key: &[(Arc<dyn PhysicalExpr>, String)],
-) -> Result<bool> {
+) -> bool {
+    assert!(!group_key.is_empty());
+    let hints = input.output_hints();
     // We check the group key is a prefix of the sort key.
-    let sort_key = input.output_sort_order()?;
+    let sort_key = hints.sort_order;
     if sort_key.is_none() {
-        return Ok(false);
+        return false;
     }
     let sort_key = sort_key.unwrap();
-    // Tracks which elements of sort key are used in the group key.
+    // Tracks which elements of sort key are used in the group key or have a single value.
     let mut sort_key_hit = vec![false; sort_key.len()];
     for (g, _) in group_key {
         let col = g.as_any().downcast_ref::<Column>();
         if col.is_none() {
-            return Ok(false);
+            return false;
         }
         let input_col = input.schema().index_of(col.unwrap().name());
         if input_col.is_err() {
-            return Ok(false);
+            return false;
         }
         let input_col = input_col.unwrap();
         let sort_key_pos = sort_key.iter().find_position(|i| **i == input_col);
         if sort_key_pos.is_none() {
-            return Ok(false);
+            return false;
         }
         sort_key_hit[sort_key_pos.unwrap().0] = true;
     }
+    for i in 0..sort_key.len() {
+        if hints.single_value_columns.contains(&sort_key[i]) {
+            sort_key_hit[i] = true;
+        }
+    }
+
     // At this point all elements of the group key mapped into some column of the sort key.
     // This checks the group key is mapped into a prefix of the sort key.
-    Ok(sort_key_hit
+    sort_key_hit
         .iter()
         .skip_while(|present| **present)
         .skip_while(|present| !**present)
         .next()
-        .is_none())
+        .is_none()
 }
 
 fn tuple_err<T, R>(value: (Result<T>, Result<R>)) -> Result<(T, R)> {

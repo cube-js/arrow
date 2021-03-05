@@ -28,7 +28,7 @@ use futures::{
 };
 
 use crate::error::{DataFusionError, Result};
-use crate::physical_plan::{Accumulator, AggregateExpr};
+use crate::physical_plan::{Accumulator, AggregateExpr, OptimizerHints};
 use crate::physical_plan::{Distribution, ExecutionPlan, Partitioning, PhysicalExpr};
 
 use arrow::array::{
@@ -256,13 +256,17 @@ impl ExecutionPlan for HashAggregateExec {
         }
     }
 
-    fn output_sort_order(&self) -> Result<Option<Vec<usize>>> {
-        Ok(match self.strategy {
+    fn output_hints(&self) -> OptimizerHints {
+        let sort_order = match self.strategy {
             AggregateStrategy::Hash => None,
             AggregateStrategy::InplaceSorted => {
                 Some((0..self.group_expr.len()).collect_vec())
             }
-        })
+        };
+        OptimizerHints {
+            sort_order,
+            single_value_columns: Vec::new(),
+        }
     }
 }
 

@@ -26,8 +26,8 @@ use super::ColumnarValue;
 use crate::error::{DataFusionError, Result};
 use crate::logical_plan::{DFSchema, DFSchemaRef, Operator};
 use crate::physical_plan::{
-    Accumulator, AggregateExpr, ExecutionPlan, Partitioning, PhysicalExpr,
-    RecordBatchStream, SendableRecordBatchStream,
+    Accumulator, AggregateExpr, ExecutionPlan, OptimizerHints, Partitioning,
+    PhysicalExpr, RecordBatchStream, SendableRecordBatchStream,
 };
 use crate::scalar::ScalarValue;
 use array::{
@@ -192,8 +192,8 @@ impl ExecutionPlan for AliasedSchemaExec {
         }))
     }
 
-    fn output_sort_order(&self) -> Result<Option<Vec<usize>>> {
-        self.input.output_sort_order()
+    fn output_hints(&self) -> OptimizerHints {
+        self.input.output_hints()
     }
 }
 

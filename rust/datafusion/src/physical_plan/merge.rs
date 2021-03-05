@@ -36,12 +36,13 @@ use arrow::{
 
 use super::RecordBatchStream;
 use crate::error::{DataFusionError, Result};
-use crate::physical_plan::ExecutionPlan;
 use crate::physical_plan::Partitioning;
+use crate::physical_plan::{ExecutionPlan, OptimizerHints};
 
 use super::SendableRecordBatchStream;
 use crate::logical_plan::DFSchemaRef;
 use pin_project_lite::pin_project;
+use std::option::Option::None;
 
 /// Merge execution plan executes partitions in parallel and combines them into a single
 /// partition. No guarantees are made about the order of the resulting partition.
@@ -150,6 +151,20 @@ impl ExecutionPlan for MergeExec {
                     schema: self.schema().to_schema_ref(),
                 }))
             }
+        }
+    }
+
+    fn output_hints(&self) -> OptimizerHints {
+        let input_hints = self.input.output_hints();
+        let sort_order;
+        if self.input.output_partitioning().partition_count() <= 1 {
+            sort_order = input_hints.sort_order
+        } else {
+            sort_order = None
+        }
+        OptimizerHints {
+            sort_order,
+            single_value_columns: input_hints.single_value_columns,
         }
     }
 }

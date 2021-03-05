@@ -57,6 +57,19 @@ pub trait PhysicalPlanner {
     ) -> Result<Arc<dyn ExecutionPlan>>;
 }
 
+/// Various hints for planning and optimizations.
+#[derive(Debug, Default)]
+pub struct OptimizerHints {
+    /// If the output is sorted, contains indices of the sort key columns in the output schema.
+    /// Each partition should meet this sort order, but order between partitions is unspecified.
+    /// Note that this does **not** guarantee the exact ordering inside each of the columns, e.g.
+    /// the values may end up in ascending or descending order, nulls can go first or last.
+    pub sort_order: Option<Vec<usize>>,
+    /// Indices of columns that will always have the same value in each row. No information about
+    /// the value is provided.
+    pub single_value_columns: Vec<usize>,
+}
+
 /// Partition-aware execution plan for a relation
 #[async_trait]
 pub trait ExecutionPlan: Debug + Send + Sync {
@@ -81,12 +94,10 @@ pub trait ExecutionPlan: Debug + Send + Sync {
         &self,
         children: Vec<Arc<dyn ExecutionPlan>>,
     ) -> Result<Arc<dyn ExecutionPlan>>;
-    /// If the output is sorted, return indices of the sort key columns in the output schema.
-    /// Useful for optimizations during planning.
-    /// Note that this does guarantee the exact ordering inside each of the columns, e.g. the values
-    /// may end up in ascending or descending order, nulls can go first or last.
-    fn output_sort_order(&self) -> Result<Option<Vec<usize>>> {
-        Ok(None)
+
+    /// Provides hints to the planner and the optimizer.
+    fn output_hints(&self) -> OptimizerHints {
+        OptimizerHints::default()
     }
 
     /// creates an iterator

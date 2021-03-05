@@ -26,7 +26,7 @@ use futures::stream::Stream;
 use futures::stream::StreamExt;
 
 use crate::error::{DataFusionError, Result};
-use crate::physical_plan::{Distribution, ExecutionPlan, Partitioning};
+use crate::physical_plan::{Distribution, ExecutionPlan, OptimizerHints, Partitioning};
 use arrow::array::ArrayRef;
 use arrow::compute::limit;
 use arrow::datatypes::SchemaRef;
@@ -110,8 +110,8 @@ impl ExecutionPlan for GlobalLimitExec {
         }
     }
 
-    fn output_sort_order(&self) -> Result<Option<Vec<usize>>> {
-        self.input.output_sort_order()
+    fn output_hints(&self) -> OptimizerHints {
+        self.input.output_hints()
     }
 
     async fn execute(&self, partition: usize) -> Result<SendableRecordBatchStream> {
@@ -195,8 +195,8 @@ impl ExecutionPlan for LocalLimitExec {
         }
     }
 
-    fn output_sort_order(&self) -> Result<Option<Vec<usize>>> {
-        self.input.output_sort_order()
+    fn output_hints(&self) -> OptimizerHints {
+        self.input.output_hints()
     }
 
     async fn execute(&self, _: usize) -> Result<SendableRecordBatchStream> {
