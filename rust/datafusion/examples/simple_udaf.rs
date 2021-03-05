@@ -24,6 +24,8 @@ use arrow::{
 
 use datafusion::{error::Result, logical_plan::create_udaf, physical_plan::Accumulator};
 use datafusion::{prelude::*, scalar::ScalarValue};
+use smallvec::smallvec;
+use smallvec::SmallVec;
 use std::sync::Arc;
 
 // create local execution context with an in-memory table
@@ -69,11 +71,16 @@ impl GeometricMean {
 // UDAFs are built using the trait `Accumulator`, that offers DataFusion the necessary functions
 // to use them.
 impl Accumulator for GeometricMean {
+    fn reset(&mut self) {
+        self.n = 0;
+        self.prod = 1.0;
+    }
+
     // this function serializes our state to `ScalarValue`, which DataFusion uses
     // to pass this state between execution stages.
     // Note that this can be arbitrary data.
-    fn state(&self) -> Result<Vec<ScalarValue>> {
-        Ok(vec![
+    fn state(&self) -> Result<SmallVec<[ScalarValue; 2]>> {
+        Ok(smallvec![
             ScalarValue::from(self.prod),
             ScalarValue::from(self.n),
         ])

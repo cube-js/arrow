@@ -74,6 +74,8 @@ use async_trait::async_trait;
 use compute::can_cast_types;
 use futures::stream::Stream;
 use futures::StreamExt;
+use smallvec::smallvec;
+use smallvec::SmallVec;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
@@ -517,6 +519,11 @@ fn sum(lhs: &ScalarValue, rhs: &ScalarValue) -> Result<ScalarValue> {
 }
 
 impl Accumulator for SumAccumulator {
+    fn reset(&mut self) {
+        self.sum = ScalarValue::try_from(&self.sum.get_datatype())
+            .expect("scalar changed type?");
+    }
+
     fn update_batch(&mut self, values: &Vec<ArrayRef>) -> Result<()> {
         let values = &values[0];
         self.sum = sum(&self.sum, &sum_batch(values)?)?;
@@ -539,8 +546,8 @@ impl Accumulator for SumAccumulator {
         self.update_batch(states)
     }
 
-    fn state(&self) -> Result<Vec<ScalarValue>> {
-        Ok(vec![self.sum.clone()])
+    fn state(&self) -> Result<SmallVec<[ScalarValue; 2]>> {
+        Ok(smallvec![self.sum.clone()])
     }
 
     fn evaluate(&self) -> Result<ScalarValue> {
@@ -639,8 +646,14 @@ impl AvgAccumulator {
 }
 
 impl Accumulator for AvgAccumulator {
-    fn state(&self) -> Result<Vec<ScalarValue>> {
-        Ok(vec![ScalarValue::from(self.count), self.sum.clone()])
+    fn reset(&mut self) {
+        self.sum = ScalarValue::try_from(&self.sum.get_datatype())
+            .expect("scalar changed type?");
+        self.count = 0;
+    }
+
+    fn state(&self) -> Result<SmallVec<[ScalarValue; 2]>> {
+        Ok(smallvec![ScalarValue::from(self.count), self.sum.clone()])
     }
 
     fn update(&mut self, values: &Vec<ScalarValue>) -> Result<()> {
@@ -967,6 +980,11 @@ impl MaxAccumulator {
 }
 
 impl Accumulator for MaxAccumulator {
+    fn reset(&mut self) {
+        self.max = ScalarValue::try_from(&self.max.get_datatype())
+            .expect("scalar changed type?");
+    }
+
     fn update_batch(&mut self, values: &Vec<ArrayRef>) -> Result<()> {
         let values = &values[0];
         let delta = &max_batch(values)?;
@@ -988,8 +1006,8 @@ impl Accumulator for MaxAccumulator {
         self.update_batch(states)
     }
 
-    fn state(&self) -> Result<Vec<ScalarValue>> {
-        Ok(vec![self.max.clone()])
+    fn state(&self) -> Result<SmallVec<[ScalarValue; 2]>> {
+        Ok(smallvec![self.max.clone()])
     }
 
     fn evaluate(&self) -> Result<ScalarValue> {
@@ -1059,8 +1077,13 @@ impl MinAccumulator {
 }
 
 impl Accumulator for MinAccumulator {
-    fn state(&self) -> Result<Vec<ScalarValue>> {
-        Ok(vec![self.min.clone()])
+    fn reset(&mut self) {
+        self.min = ScalarValue::try_from(&self.min.get_datatype())
+            .expect("scalar changed type?");
+    }
+
+    fn state(&self) -> Result<SmallVec<[ScalarValue; 2]>> {
+        Ok(smallvec![self.min.clone()])
     }
 
     fn update_batch(&mut self, values: &Vec<ArrayRef>) -> Result<()> {
@@ -1150,6 +1173,10 @@ impl CountAccumulator {
 }
 
 impl Accumulator for CountAccumulator {
+    fn reset(&mut self) {
+        self.count = 0;
+    }
+
     fn update_batch(&mut self, values: &Vec<ArrayRef>) -> Result<()> {
         let array = &values[0];
         self.count += (array.len() - array.data().null_count()) as u64;
@@ -1183,8 +1210,8 @@ impl Accumulator for CountAccumulator {
         Ok(())
     }
 
-    fn state(&self) -> Result<Vec<ScalarValue>> {
-        Ok(vec![ScalarValue::UInt64(Some(self.count))])
+    fn state(&self) -> Result<SmallVec<[ScalarValue; 2]>> {
+        Ok(smallvec![ScalarValue::UInt64(Some(self.count))])
     }
 
     fn evaluate(&self) -> Result<ScalarValue> {

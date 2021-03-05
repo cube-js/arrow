@@ -29,6 +29,7 @@ use crate::physical_plan::group_scalar::GroupByScalar;
 use crate::physical_plan::{Accumulator, AggregateExpr, PhysicalExpr};
 use crate::scalar::ScalarValue;
 use itertools::Itertools;
+use smallvec::SmallVec;
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
 struct DistinctScalarValues(Vec<GroupByScalar>);
@@ -107,6 +108,10 @@ struct DistinctCountAccumulator {
 }
 
 impl Accumulator for DistinctCountAccumulator {
+    fn reset(&mut self) {
+        self.values.clear();
+    }
+
     fn update(&mut self, values: &Vec<ScalarValue>) -> Result<()> {
         // If a row has a NULL, it is not included in the final count.
         if !values.iter().any(|v| v.is_null()) {
@@ -146,12 +151,12 @@ impl Accumulator for DistinctCountAccumulator {
         })
     }
 
-    fn state(&self) -> Result<Vec<ScalarValue>> {
+    fn state(&self) -> Result<SmallVec<[ScalarValue; 2]>> {
         let mut cols_out = self
             .data_types
             .iter()
             .map(|data_type| ScalarValue::List(Some(Vec::new()), data_type.clone()))
-            .collect::<Vec<_>>();
+            .collect::<SmallVec<_>>();
 
         let mut cols_vec = cols_out
             .iter_mut()
@@ -281,7 +286,7 @@ mod tests {
         let mut accum = agg.create_accumulator()?;
         accum.update_batch(arrays)?;
 
-        Ok((accum.state()?, accum.evaluate()?))
+        Ok((accum.state()?.to_vec(), accum.evaluate()?))
     }
 
     fn run_update(
@@ -301,7 +306,7 @@ mod tests {
             accum.update(row)?
         }
 
-        Ok((accum.state()?, accum.evaluate()?))
+        Ok((accum.state()?.to_vec(), accum.evaluate()?))
     }
 
     fn run_merge_batch(
@@ -321,7 +326,7 @@ mod tests {
         let mut accum = agg.create_accumulator()?;
         accum.merge_batch(arrays)?;
 
-        Ok((accum.state()?, accum.evaluate()?))
+        Ok((accum.state()?.to_vec(), accum.evaluate()?))
     }
 
     macro_rules! test_count_distinct_update_batch_numeric {

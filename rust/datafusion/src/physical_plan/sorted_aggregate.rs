@@ -6,7 +6,7 @@ use crate::physical_plan::hash_aggregate::{
 };
 use crate::physical_plan::AggregateExpr;
 use crate::scalar::ScalarValue;
-use arrow::array::{ArrayBuilder, ArrayRef};
+use arrow::array::{ArrayBuilder, ArrayRef, LargeStringArray, StringArray};
 use arrow::datatypes::SchemaRef;
 use arrow::record_batch::RecordBatch;
 use itertools::Itertools;
@@ -76,6 +76,7 @@ impl SortedAggState {
         assert_ne!(key_columns.len(), 0);
         assert_eq!(aggr_input_values.len(), agg_exprs.len());
         let mut values_buffer = Vec::with_capacity(aggr_input_values.len());
+        let mut value_scalars_buffer = Vec::with_capacity(2);
 
         let num_rows = key_columns[0].len();
         if num_rows == 0 {
@@ -112,20 +113,41 @@ impl SortedAggState {
                     &mut self.processed_values,
                 )?;
                 create_group_by_values(key_columns, start, &mut current_agg.key)?;
-                current_agg.accumulators = create_accumulators(agg_exprs)?;
+                for a in &mut current_agg.accumulators {
+                    a.reset();
+                }
             } else {
-                // Update the current group.
-                for i in 0..aggr_input_values.len() {
-                    values_buffer.clear();
-                    for inp in &aggr_input_values[i] {
-                        values_buffer.push(inp.slice(start, end - start));
-                    }
-                    match mode {
-                        AggregateMode::Partial => {
-                            current_agg.accumulators[i].update_batch(&values_buffer)?
+                if end - start < 8 {
+                    // Update individual values, inputs are small.
+                    for i in 0..aggr_input_values.len() {
+                        for agg_row in start..end {
+                            value_scalars_buffer.clear();
+                            for a in &aggr_input_values[i] {
+                                value_scalars_buffer
+                                    .push(ScalarValue::try_from_array(a, agg_row)?)
+                            }
+
+                            match mode {
+                                AggregateMode::Partial => current_agg.accumulators[i]
+                                    .update(&value_scalars_buffer)?,
+                                AggregateMode::Final => current_agg.accumulators[i]
+                                    .merge(&value_scalars_buffer)?,
+                            }
                         }
-                        AggregateMode::Final => {
-                            current_agg.accumulators[i].merge_batch(&values_buffer)?
+                    }
+                } else {
+                    // Update in batches, the inputs are large.
+                    for i in 0..aggr_input_values.len() {
+                        values_buffer.clear();
+                        for inp in &aggr_input_values[i] {
+                            values_buffer.push(inp.slice(start, end - start));
+                        }
+                        match mode {
+                            AggregateMode::Partial => current_agg.accumulators[i]
+                                .update_batch(&values_buffer)?,
+                            AggregateMode::Final => {
+                                current_agg.accumulators[i].merge_batch(&values_buffer)?
+                            }
                         }
                     }
                 }
@@ -144,11 +166,31 @@ fn agg_key_equals(
 ) -> Result<bool> {
     assert_eq!(key.len(), key_columns.len());
     for i in 0..key.len() {
-        // TODO: do not allocate for strings.
-        if ScalarValue::from(&key[i])
-            != ScalarValue::try_from_array(&key_columns[i], row)?
-        {
-            return Ok(false);
+        match &key[i] {
+            // Optimize string comparisons to avoid allocations.
+            GroupByScalar::Utf8(l) => {
+                let r;
+                if let Some(a) = key_columns[i].as_any().downcast_ref::<StringArray>() {
+                    r = a.value(row);
+                } else if let Some(a) =
+                    key_columns[i].as_any().downcast_ref::<LargeStringArray>()
+                {
+                    r = a.value(row);
+                } else {
+                    return Err(DataFusionError::Internal(
+                        "Failed to downcast to StringArray".to_string(),
+                    ));
+                }
+                if l != r {
+                    return Ok(false);
+                }
+            }
+            l => {
+                let r = ScalarValue::try_from_array(&key_columns[i], row)?;
+                if ScalarValue::from(l) != r {
+                    return Ok(false);
+                }
+            }
         }
     }
     return Ok(true);

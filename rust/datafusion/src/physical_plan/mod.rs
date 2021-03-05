@@ -33,6 +33,7 @@ use async_trait::async_trait;
 use futures::stream::Stream;
 
 use self::merge::MergeExec;
+use smallvec::SmallVec;
 
 /// Trait for types that stream [arrow::record_batch::RecordBatch]
 pub trait RecordBatchStream: Stream<Item = ArrowResult<RecordBatch>> {
@@ -244,10 +245,13 @@ pub trait AggregateExpr: Send + Sync + Debug {
 /// * update its state from multiple accumulators' states via `merge`
 /// * compute the final value from its internal state via `evaluate`
 pub trait Accumulator: Send + Sync + Debug {
+    /// Return accumulator to its initial state.
+    fn reset(&mut self);
+
     /// Returns the state of the accumulator at the end of the accumulation.
     // in the case of an average on which we track `sum` and `n`, this function should return a vector
     // of two values, sum and n.
-    fn state(&self) -> Result<Vec<ScalarValue>>;
+    fn state(&self) -> Result<SmallVec<[ScalarValue; 2]>>;
 
     /// updates the accumulator's state from a vector of scalars.
     fn update(&mut self, values: &Vec<ScalarValue>) -> Result<()>;
