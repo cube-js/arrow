@@ -191,6 +191,10 @@ impl ExecutionPlan for AliasedSchemaExec {
             schema: self.schema().to_schema_ref(),
         }))
     }
+
+    fn output_sort_order(&self) -> Result<Option<Vec<usize>>> {
+        self.input.output_sort_order()
+    }
 }
 
 /// Alias Schema for every batch

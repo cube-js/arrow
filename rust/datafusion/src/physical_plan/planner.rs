@@ -220,7 +220,7 @@ impl DefaultPhysicalPlanner {
                     })
                     .collect::<Result<Vec<_>>>()?;
 
-                let strategy = if input_sorted_by_group_key(input_exec.as_ref(), &groups)
+                let strategy = if input_sorted_by_group_key(input_exec.as_ref(), &groups)?
                 {
                     AggregateStrategy::InplaceSorted
                 } else {
@@ -886,11 +886,11 @@ impl DefaultPhysicalPlanner {
 fn input_sorted_by_group_key(
     input: &dyn ExecutionPlan,
     group_key: &[(Arc<dyn PhysicalExpr>, String)],
-) -> bool {
+) -> Result<bool> {
     // We check the group key is a prefix of the sort key.
-    let sort_key = input.output_sort_order();
+    let sort_key = input.output_sort_order()?;
     if sort_key.is_none() {
-        return false;
+        return Ok(false);
     }
     let sort_key = sort_key.unwrap();
     // Tracks which elements of sort key are used in the group key.
@@ -898,27 +898,27 @@ fn input_sorted_by_group_key(
     for (g, _) in group_key {
         let col = g.as_any().downcast_ref::<Column>();
         if col.is_none() {
-            return false;
+            return Ok(false);
         }
         let input_col = input.schema().index_of(col.unwrap().name());
         if input_col.is_err() {
-            return false;
+            return Ok(false);
         }
         let input_col = input_col.unwrap();
         let sort_key_pos = sort_key.iter().find_position(|i| **i == input_col);
         if sort_key_pos.is_none() {
-            return false;
+            return Ok(false);
         }
         sort_key_hit[sort_key_pos.unwrap().0] = true;
     }
     // At this point all elements of the group key mapped into some column of the sort key.
     // This checks the group key is mapped into a prefix of the sort key.
-    sort_key_hit
+    Ok(sort_key_hit
         .iter()
         .skip_while(|present| **present)
         .skip_while(|present| !**present)
         .next()
-        .is_none()
+        .is_none())
 }
 
 fn tuple_err<T, R>(value: (Result<T>, Result<R>)) -> Result<(T, R)> {

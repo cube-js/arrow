@@ -113,7 +113,7 @@ impl ExecutionPlan for FilterExec {
         }
     }
 
-    fn output_sort_order(&self) -> Option<Vec<usize>> {
+    fn output_sort_order(&self) -> Result<Option<Vec<usize>>> {
         self.input.output_sort_order()
     }
 

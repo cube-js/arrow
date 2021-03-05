@@ -110,7 +110,7 @@ impl ExecutionPlan for GlobalLimitExec {
         }
     }
 
-    fn output_sort_order(&self) -> Option<Vec<usize>> {
+    fn output_sort_order(&self) -> Result<Option<Vec<usize>>> {
         self.input.output_sort_order()
     }
 
@@ -195,7 +195,7 @@ impl ExecutionPlan for LocalLimitExec {
         }
     }
 
-    fn output_sort_order(&self) -> Option<Vec<usize>> {
+    fn output_sort_order(&self) -> Result<Option<Vec<usize>>> {
         self.input.output_sort_order()
     }
 

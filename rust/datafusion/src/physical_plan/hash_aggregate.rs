@@ -256,13 +256,13 @@ impl ExecutionPlan for HashAggregateExec {
         }
     }
 
-    fn output_sort_order(&self) -> Option<Vec<usize>> {
-        match self.strategy {
+    fn output_sort_order(&self) -> Result<Option<Vec<usize>>> {
+        Ok(match self.strategy {
             AggregateStrategy::Hash => None,
             AggregateStrategy::InplaceSorted => {
                 Some((0..self.group_expr.len()).collect_vec())
             }
-        }
+        })
     }
 }
 
@@ -1918,6 +1918,7 @@ mod tests {
         ))];
 
         let partial_aggregate = Arc::new(HashAggregateExec::try_new(
+            AggregateStrategy::Hash,
             AggregateMode::Partial,
             groups.clone(),
             aggregates.clone(),
@@ -1943,6 +1944,7 @@ mod tests {
             (0..groups.len()).map(|i| col(&groups[i].1)).collect();
 
         let merged_aggregate = Arc::new(HashAggregateExec::try_new(
+            AggregateStrategy::Hash,
             AggregateMode::Final,
             final_group
                 .iter()

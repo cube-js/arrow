@@ -35,7 +35,6 @@ use super::{RecordBatchStream, SendableRecordBatchStream};
 use async_trait::async_trait;
 
 use crate::logical_plan::{DFSchemaRef, ToDFSchema};
-use crate::physical_plan::expressions::Column;
 use futures::stream::Stream;
 use futures::stream::StreamExt;
 

@@ -55,6 +55,9 @@ pub struct MergeSortExec {
 impl MergeSortExec {
     /// Create a new sort execution plan
     pub fn try_new(input: Arc<dyn ExecutionPlan>, columns: Vec<String>) -> Result<Self> {
+        if columns.is_empty() {
+            return Err(DataFusionError::Internal("Empty columns passed for MergeSortExec".to_string()));
+        }
         Ok(Self { input, columns })
     }
 }
@@ -87,13 +90,13 @@ impl ExecutionPlan for MergeSortExec {
         )?))
     }
 
-    fn output_sort_order(&self) -> Option<Vec<usize>> {
-        Some(
+    fn output_sort_order(&self) -> Result<Option<Vec<usize>>> {
+        Ok(Some(
             self.columns
                 .iter()
                 .map(|c| self.schema().index_of(&c))
                 .try_collect()?,
-        )
+        ))
     }
 
     async fn execute(&self, partition: usize) -> Result<SendableRecordBatchStream> {

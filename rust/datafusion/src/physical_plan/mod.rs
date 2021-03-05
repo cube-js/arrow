@@ -85,8 +85,8 @@ pub trait ExecutionPlan: Debug + Send + Sync {
     /// Useful for optimizations during planning.
     /// Note that this does guarantee the exact ordering inside each of the columns, e.g. the values
     /// may end up in ascending or descending order, nulls can go first or last.
-    fn output_sort_order(&self) -> Option<Vec<usize>> {
-        None
+    fn output_sort_order(&self) -> Result<Option<Vec<usize>>> {
+        Ok(None)
     }
 
     /// creates an iterator
