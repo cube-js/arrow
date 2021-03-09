@@ -128,8 +128,10 @@ impl SortedAggState {
                             }
 
                             match mode {
-                                AggregateMode::Partial => current_agg.accumulators[i]
-                                    .update(&value_scalars_buffer)?,
+                                AggregateMode::Partial | AggregateMode::Full => {
+                                    current_agg.accumulators[i]
+                                        .update(&value_scalars_buffer)?
+                                }
                                 AggregateMode::Final => current_agg.accumulators[i]
                                     .merge(&value_scalars_buffer)?,
                             }
@@ -143,7 +145,8 @@ impl SortedAggState {
                             values_buffer.push(inp.slice(start, end - start));
                         }
                         match mode {
-                            AggregateMode::Partial => current_agg.accumulators[i]
+                            AggregateMode::Partial | AggregateMode::Full => current_agg
+                                .accumulators[i]
                                 .update_batch(&values_buffer)?,
                             AggregateMode::Final => {
                                 current_agg.accumulators[i].merge_batch(&values_buffer)?

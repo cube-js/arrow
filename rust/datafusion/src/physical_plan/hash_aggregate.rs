@@ -84,6 +84,8 @@ pub enum AggregateMode {
     Partial,
     /// Final aggregate that produces a single partition of output
     Final,
+    /// Combines `Partial` and `Final` in a single pass. Saves time, but not always possible.
+    Full,
 }
 
 /// Defines which aggregation algorithm is used
@@ -133,7 +135,7 @@ fn create_schema(
                 fields.extend(expr.state_fields()?.iter().cloned())
             }
         }
-        AggregateMode::Final => {
+        AggregateMode::Final | AggregateMode::Full => {
             // in final mode, the field with the final result of the accumulator
             for expr in aggr_expr {
                 fields.push(expr.field()?)
@@ -205,7 +207,9 @@ impl ExecutionPlan for HashAggregateExec {
 
     fn required_child_distribution(&self) -> Distribution {
         match &self.mode {
-            AggregateMode::Partial => Distribution::UnspecifiedDistribution,
+            AggregateMode::Partial | AggregateMode::Full => {
+                Distribution::UnspecifiedDistribution
+            }
             AggregateMode::Final => Distribution::SinglePartition,
         }
     }
@@ -428,7 +432,9 @@ fn group_aggregate_batch(
                     )
                 })
                 .try_for_each(|(accumulator, values)| match mode {
-                    AggregateMode::Partial => accumulator.update_batch(&values),
+                    AggregateMode::Partial | AggregateMode::Full => {
+                        accumulator.update_batch(&values)
+                    }
                     AggregateMode::Final => {
                         // note: the aggregation here is over states, not values, thus the merge
                         accumulator.merge_batch(&values)
@@ -733,7 +739,7 @@ fn aggregate_expressions(
     mode: &AggregateMode,
 ) -> Result<Vec<Vec<Arc<dyn PhysicalExpr>>>> {
     match mode {
-        AggregateMode::Partial => {
+        AggregateMode::Partial | AggregateMode::Full => {
             Ok(aggr_expr.iter().map(|agg| agg.expressions()).collect())
         }
         // in this mode, we build the merge expressions of the aggregation
@@ -830,7 +836,7 @@ fn aggregate_batch(
 
             // 1.3
             match mode {
-                AggregateMode::Partial => {
+                AggregateMode::Partial | AggregateMode::Full => {
                     accum.update_batch(values)?;
                 }
                 AggregateMode::Final => {
@@ -1315,7 +1321,7 @@ fn finalize_aggregation_into(
                 }
             }
         }
-        AggregateMode::Final => {
+        AggregateMode::Final | AggregateMode::Full => {
             for i in 0..accumulators.len() {
                 // merge the state to the final value
                 let v = accumulators[i].evaluate()?;
@@ -1350,7 +1356,7 @@ fn finalize_aggregation(
                 .collect::<Result<Vec<_>>>()?;
             Ok(a.iter().flatten().cloned().collect::<Vec<_>>())
         }
-        AggregateMode::Final => {
+        AggregateMode::Final | AggregateMode::Full => {
             // merge the state to the final value
             accumulators
                 .iter()

@@ -229,6 +229,17 @@ impl DefaultPhysicalPlanner {
                     strategy = AggregateStrategy::Hash
                 };
 
+                if input_exec.output_partitioning().partition_count() == 1 {
+                    // A single pass is enough for 1 partition.
+                    return Ok(Arc::new(HashAggregateExec::try_new(
+                        strategy,
+                        AggregateMode::Full,
+                        groups,
+                        aggregates,
+                        input_exec,
+                    )?));
+                }
+
                 let mut initial_aggr: Arc<dyn ExecutionPlan> =
                     Arc::new(HashAggregateExec::try_new(
                         strategy,
