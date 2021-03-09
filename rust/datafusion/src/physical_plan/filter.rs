@@ -35,7 +35,7 @@ use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
 
 use crate::logical_plan::{DFSchemaRef, Operator};
-use crate::physical_plan::expressions::{BinaryExpr, Column, Literal};
+use crate::physical_plan::expressions::{BinaryExpr, CastExpr, Column, Literal};
 use futures::stream::{Stream, StreamExt};
 
 /// FilterExec evaluates a boolean predicate against all input batches to determine which rows to
@@ -157,7 +157,15 @@ fn extract_single_value_columns_impl<'a>(
     out: &mut Vec<&'a Column>,
 ) {
     // TODO: more sophisticated expressions.
-    let is_constant = |e: &dyn PhysicalExpr| e.as_any().is::<Literal>();
+    let is_constant = |mut e: &dyn PhysicalExpr| loop {
+        if e.as_any().is::<Literal>() {
+            return true;
+        } else if let Some(c) = e.as_any().downcast_ref::<CastExpr>() {
+            e = c.expr().as_ref();
+        } else {
+            return false;
+        }
+    };
 
     let predicate = predicate.as_any();
     if let Some(binary) = predicate.downcast_ref::<BinaryExpr>() {
