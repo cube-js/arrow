@@ -27,7 +27,7 @@ use futures::StreamExt;
 
 pub use arrow::compute::SortOptions;
 use arrow::compute::{is_not_null, lexsort_to_indices, take, SortColumn, TakeOptions};
-use arrow::datatypes::SchemaRef;
+use arrow::datatypes::{SchemaRef, Schema, DataType, TimeUnit};
 use arrow::error::Result as ArrowResult;
 use arrow::record_batch::RecordBatch;
 use arrow::{array::ArrayRef, error::ArrowError};
@@ -42,6 +42,12 @@ use crate::physical_plan::memory::MemoryStream;
 use arrow::compute::kernels::merge::merge_sort_indices;
 use async_trait::async_trait;
 use futures::future::join_all;
+use itertools::Itertools;
+use arrow::array::{ArrayBuilder, Int64Builder, Float64Builder, StringBuilder, Array, Int64Array, StringArray, Float64Array, BooleanBuilder, BooleanArray, TimestampMicrosecondBuilder, TimestampMicrosecondArray};
+use arrow::ipc::Utf8Builder;
+use smallvec::alloc::collections::BinaryHeap;
+use std::cmp::Ordering;
+use std::hash::Hasher;
 
 /// Sort execution plan
 #[derive(Debug)]
@@ -350,6 +356,7 @@ impl Stream for MergeSortStream {
                     let (new_cursors, sorted_batch) = merge_sort(
                         batches.iter().map(|(c, b)| (*c, b)).collect(),
                         self.columns.clone(),
+                        &self.schema,
                     )?;
 
                     for ((state, new_cursor), (_, batch)) in self
@@ -371,73 +378,144 @@ impl Stream for MergeSortStream {
     }
 }
 
+fn create_builder(t: &DataType, capacity: usize) -> Box<dyn ArrayBuilder> {
+    match t {
+        DataType::Int64 => Box::new(Int64Builder::new(capacity)),
+        DataType::Utf8 => Box::new(StringBuilder::new(capacity)),
+        DataType::Float64 => Box::new(Float64Builder::new(capacity)),
+        DataType::Boolean => Box::new(BooleanBuilder::new(capacity)),
+        DataType::Timestamp(TimeUnit::Microsecond, None) => Box::new(TimestampMicrosecondBuilder::new(capacity)),
+        dt => panic!("unimplemented for {}", dt),
+    }
+}
+
+fn append_value(t: &DataType, b: &mut dyn ArrayBuilder, v: &dyn Array, row: usize) -> Option<()> {
+    match t {
+        DataType::Int64 => {
+            b.as_any_mut().downcast_mut::<Int64Builder>()?
+                .append_value(v.as_any().downcast_ref::<Int64Array>()?.value(row));
+        },
+        DataType::Utf8 => {
+            b.as_any_mut().downcast_mut::<StringBuilder>()?
+                .append_value(v.as_any().downcast_ref::<StringArray>()?.value(row));
+        },
+        DataType::Float64 => {
+            b.as_any_mut().downcast_mut::<Float64Builder>()?
+                .append_value(v.as_any().downcast_ref::<Float64Array>()?.value(row));
+        },
+        DataType::Boolean => {
+            b.as_any_mut().downcast_mut::<BooleanBuilder>()?
+                .append_value(v.as_any().downcast_ref::<BooleanArray>()?.value(row));
+        },
+        DataType::Timestamp(TimeUnit::Microsecond, None) => {
+            b.as_any_mut().downcast_mut::<TimestampMicrosecondBuilder>()?
+                .append_value(v.as_any().downcast_ref::<TimestampMicrosecondArray>()?.value(row));
+        },
+
+        _ => panic!("unimplemented"),
+    }
+    Some(())
+}
+
+struct RowRef<'a> {
+    batch: &'a RecordBatch,
+    columns: &'a[&'a dyn Array],
+    types: &'a [DataType],
+    row: usize,
+}
+
+impl PartialEq for RowRef<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == Ordering::Equal
+    }
+}
+impl Eq for RowRef<'_> {}
+
+impl PartialOrd for RowRef<'_> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+fn cmp_value(t: &DataType, l: &dyn Array, li:usize, r: &dyn Array, ri: usize) -> Ordering {
+    match t {
+        DataType::Int64 => {
+            l.as_any().downcast_ref::<Int64Array>().unwrap().value(li)
+                .cmp(&r.as_any().downcast_ref::<Int64Array>().unwrap().value(ri))
+        },
+        DataType::Float64 => {
+            l.as_any().downcast_ref::<Float64Array>().unwrap().value(li)
+                .total_cmp(&r.as_any().downcast_ref::<Float64Array>().unwrap().value(ri))
+        },
+        DataType::Utf8 => {
+            l.as_any().downcast_ref::<StringArray>().unwrap().value(li)
+                .cmp(&r.as_any().downcast_ref::<StringArray>().unwrap().value(ri))
+        },
+        DataType::Boolean => {
+            l.as_any().downcast_ref::<BooleanArray>().unwrap().value(li)
+                .cmp(&r.as_any().downcast_ref::<BooleanArray>().unwrap().value(ri))
+        },
+        _ => panic!("unimplemented"),
+    }
+}
+
+impl Ord for RowRef<'_> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        debug_assert_eq!(self.columns.len(), other.columns.len());
+        for i in 0..self.columns.len() {
+            debug_assert_eq!(self.types[i], other.types[i]);
+            let o = cmp_value(&self.types[i], self.columns[i], self.row,
+                other.columns[i], other.row);
+            if o != Ordering::Equal {
+                return o;
+            }
+        }
+        Ordering::Equal
+    }
+}
+
+
 fn merge_sort(
     batches: Vec<(usize, &RecordBatch)>,
     columns: Vec<String>,
+    schema: &SchemaRef,
 ) -> ArrowResult<(Vec<usize>, RecordBatch)> {
-    let lasts = (0..batches.len()).map(|_| false).collect::<Vec<_>>();
-    let cursors = batches.iter().map(|(c, _)| *c).collect::<Vec<_>>();
-    let arrays = batches
-        .iter()
-        .map(|(_, batch)| {
-            columns
-                .iter()
-                .map(|c| -> ArrowResult<ArrayRef> {
-                    Ok(batch.column(batch.schema().index_of(c)?).clone())
-                })
-                .collect::<ArrowResult<Vec<_>>>()
-        })
+    let batches = batches.into_iter().map(|(_, b)| b).collect_vec();
+    let total_rows = batches.iter().map(|b| b.num_rows()).sum();
+    let mut r = schema.fields().iter().map(|c| create_builder(&c.data_type(), total_rows)).collect_vec();
+
+    let sort_column_types = columns.iter().map(|c| Ok(schema.field_with_name(c)?.data_type().clone()))
         .collect::<ArrowResult<Vec<_>>>()?;
-    let indices = merge_sort_indices(
-        arrays
-            .iter()
-            .map(|cols| cols.as_slice())
-            .collect::<Vec<_>>(),
-        cursors,
-        lasts,
-    )?;
-    let columns_to_coalesce = batches
+    let batch_columns : Vec<Vec<&dyn Array>> = batches.iter().map(|b| columns
         .iter()
-        .zip(indices.iter())
-        .map(|((_, batch), (_, i))| -> ArrowResult<Vec<ArrayRef>> {
-            batch
-                .columns()
-                .iter()
-                .map(|c| take(c.as_ref(), i, None))
-                .collect::<ArrowResult<Vec<_>>>()
+        .map(|c| -> ArrowResult<&dyn Array> {
+            Ok(b.column(b.schema().index_of(c)?).as_ref())
         })
-        .collect::<ArrowResult<Vec<_>>>()?;
-    let new_batch = RecordBatch::try_new(
-        batches[0].1.schema(),
-        (0..batches[0].1.columns().len())
-            .map(|column_index| {
-                let mut column_arrays = columns_to_coalesce
-                    .iter()
-                    .map(|batch_columns| batch_columns[column_index].clone());
-                let first = Ok(column_arrays.next().unwrap());
-                column_arrays.fold(first, |res, b| {
-                    res.and_then(|a| -> ArrowResult<ArrayRef> {
-                        Ok(if_then_else(
-                            &is_not_null(a.as_ref())?,
-                            a.clone(),
-                            b,
-                            a.data_type(),
-                        )
-                        .map_err(|e| ArrowError::ComputeError(e.to_string()))?)
-                    })
-                })
-            })
-            .collect::<ArrowResult<Vec<_>>>()?,
-    )?;
-    assert_eq!(
-        new_batch.num_rows(),
-        batches
-            .iter()
-            .zip(indices.iter())
-            .map(|((offset, _), (new_offset, _))| new_offset - offset)
-            .sum::<usize>()
-    );
-    Ok((indices.iter().map(|(i, _)| *i).collect(), new_batch))
+        .collect::<ArrowResult<Vec<_>>>()).collect::<ArrowResult<Vec<_>>>()?;
+
+    let mut mins = BinaryHeap::with_capacity(batches.len());
+    for (i, cols) in batch_columns.iter().enumerate() {
+        mins.push(RowRef {
+            batch: &batches[i],
+            columns: &cols,
+            types: &sort_column_types,
+            row: 0,
+        })
+    }
+    // TODO: support nulls.
+    // TODO: error checking.
+    while let Some(mut min) = mins.pop() {
+        for i in 0..r.len() {
+            append_value(schema.field(i).data_type(), r[i].as_mut(), min.batch.column(i).as_ref(), min.row);
+        }
+        if min.row + 1 < min.batch.num_rows() {
+            min.row += 1;
+            mins.push(min);
+        }
+    }
+
+    let r = r.into_iter().map(|mut b| b.finish()).collect();
+    Ok((batches.iter().map(|b| b.num_rows()).collect_vec(), RecordBatch::try_new(schema.clone(), r)?))
 }
 
 impl RecordBatchStream for MergeSortStream {
