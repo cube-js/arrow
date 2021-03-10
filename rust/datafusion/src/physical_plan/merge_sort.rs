@@ -167,7 +167,7 @@ impl ExecutionPlan for MergeReSortExec {
         &self,
         children: Vec<Arc<dyn ExecutionPlan>>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
-        Ok(Arc::new(MergeSortExec::try_new(
+        Ok(Arc::new(MergeReSortExec::try_new(
             children[0].clone(),
             self.columns.clone(),
         )?))
@@ -176,7 +176,7 @@ impl ExecutionPlan for MergeReSortExec {
     async fn execute(&self, partition: usize) -> Result<SendableRecordBatchStream> {
         if 0 != partition {
             return Err(DataFusionError::Internal(format!(
-                "MergeSortExec invalid partition {}",
+                "MergeReSortExec invalid partition {}",
                 partition
             )));
         }
