@@ -169,6 +169,11 @@ impl HashAggregateExec {
         })
     }
 
+    /// Aggregation strategy.
+    pub fn strategy(&self) -> AggregateStrategy {
+        self.strategy
+    }
+
     /// Aggregation mode (full, partial)
     pub fn mode(&self) -> &AggregateMode {
         &self.mode

@@ -220,15 +220,7 @@ impl DefaultPhysicalPlanner {
                     })
                     .collect::<Result<Vec<_>>>()?;
 
-                let strategy;
-                if !groups.is_empty()
-                    && input_sorted_by_group_key(input_exec.as_ref(), &groups)
-                {
-                    strategy = AggregateStrategy::InplaceSorted
-                } else {
-                    strategy = AggregateStrategy::Hash
-                };
-
+                let strategy = compute_aggregation_strategy(input_exec.as_ref(), &groups);
                 if input_exec.output_partitioning().partition_count() == 1 {
                     // A single pass is enough for 1 partition.
                     return Ok(Arc::new(HashAggregateExec::try_new(
@@ -894,6 +886,18 @@ impl DefaultPhysicalPlanner {
             expr: self.create_physical_expr(e, input_schema, ctx_state)?,
             options,
         })
+    }
+}
+
+/// Returns the most efficient aggregation strategy for the given input.
+pub fn compute_aggregation_strategy(
+    input: &dyn ExecutionPlan,
+    group_key: &[(Arc<dyn PhysicalExpr>, String)],
+) -> AggregateStrategy {
+    if !group_key.is_empty() && input_sorted_by_group_key(input, &group_key) {
+        AggregateStrategy::InplaceSorted
+    } else {
+        AggregateStrategy::Hash
     }
 }
 
