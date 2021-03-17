@@ -78,7 +78,7 @@ use smallvec::SmallVec;
 use std::convert::TryFrom;
 
 /// Hash aggregate modes
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum AggregateMode {
     /// Partial aggregate that can be applied in parallel across input partitions
     Partial,

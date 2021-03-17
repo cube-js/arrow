@@ -61,6 +61,11 @@ impl MergeSortExec {
         }
         Ok(Self { input, columns })
     }
+
+    /// Input execution plan
+    pub fn input(&self) -> &Arc<dyn ExecutionPlan> {
+        &self.input
+    }
 }
 
 #[async_trait]

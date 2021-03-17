@@ -91,6 +91,11 @@ impl MergeJoinExec {
             schema,
         })
     }
+
+    /// Columns to join on
+    pub fn join_on(&self) -> &[(String, String)] {
+        &self.on
+    }
 }
 
 #[async_trait]
