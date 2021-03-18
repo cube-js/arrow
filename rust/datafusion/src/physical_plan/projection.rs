@@ -26,7 +26,7 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use crate::error::{DataFusionError, Result};
-use crate::physical_plan::{ExecutionPlan, Partitioning, PhysicalExpr};
+use crate::physical_plan::{ExecutionPlan, OptimizerHints, Partitioning, PhysicalExpr};
 use arrow::datatypes::{Field, Schema, SchemaRef};
 use arrow::error::Result as ArrowResult;
 use arrow::record_batch::RecordBatch;
@@ -35,6 +35,7 @@ use super::{RecordBatchStream, SendableRecordBatchStream};
 use async_trait::async_trait;
 
 use crate::logical_plan::{DFSchemaRef, ToDFSchema};
+use crate::physical_plan::expressions::Column;
 use futures::stream::Stream;
 use futures::stream::StreamExt;
 
@@ -130,6 +131,49 @@ impl ExecutionPlan for ProjectionExec {
             expr: self.expr.iter().map(|x| x.0.clone()).collect(),
             input: self.input.execute(partition).await?,
         }))
+    }
+
+    fn output_hints(&self) -> OptimizerHints {
+        let input_hints = self.input.output_hints();
+        if input_hints == OptimizerHints::default() {
+            return OptimizerHints::default();
+        }
+
+        let input_schema = self.input.schema().to_schema_ref();
+        let mut input_to_output = vec![None; input_schema.fields().len()];
+        for out_i in 0..self.expr.len() {
+            let column;
+            if let Some(c) = self.expr[out_i].0.as_any().downcast_ref::<Column>() {
+                column = c;
+            } else {
+                continue;
+            }
+            let input_index = column
+                .lookup_field(&input_schema)
+                .ok()
+                .and_then(|f| input_schema.index_of(f.name()).ok());
+            if input_index.is_none() {
+                continue;
+            }
+            input_to_output[input_index.unwrap()] = Some(out_i);
+        }
+
+        let project_columns = |mut v: Vec<usize>| {
+            for i in 0..v.len() {
+                if let Some(out_i) = input_to_output[v[i]] {
+                    v[i] = out_i;
+                } else {
+                    v.truncate(i);
+                    return v;
+                }
+            }
+            v
+        };
+
+        OptimizerHints {
+            sort_order: input_hints.sort_order.map(project_columns),
+            single_value_columns: project_columns(input_hints.single_value_columns),
+        }
     }
 }
 

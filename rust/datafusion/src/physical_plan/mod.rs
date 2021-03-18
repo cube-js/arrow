@@ -59,7 +59,7 @@ pub trait PhysicalPlanner {
 }
 
 /// Various hints for planning and optimizations.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct OptimizerHints {
     /// If the output is sorted, contains indices of the sort key columns in the output schema.
     /// Each partition should meet this sort order, but order between partitions is unspecified.

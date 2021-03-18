@@ -241,6 +241,21 @@ impl ExecutionPlan for UnionExec {
     async fn execute(&self, partition: usize) -> Result<SendableRecordBatchStream> {
         self.inputs[partition].execute(0).await
     }
+
+    fn output_hints(&self) -> OptimizerHints {
+        if self.inputs.is_empty() {
+            return OptimizerHints::default();
+        }
+
+        let hints = self.inputs[0].output_hints();
+        for i in self.inputs.iter().skip(1) {
+            let other = i.output_hints();
+            if other != hints {
+                return OptimizerHints::default();
+            }
+        }
+        hints
+    }
 }
 
 #[cfg(test)]
