@@ -654,7 +654,8 @@ impl GroupedHashAggregateStream {
 }
 
 type KeyVec = SmallVec<[u8; 64]>;
-pub(crate) type AccumulatorSet = SmallVec<[Box<dyn Accumulator>; 2]>;
+#[allow(missing_docs)]
+pub type AccumulatorSet = SmallVec<[Box<dyn Accumulator>; 2]>;
 type Accumulators = HashMap<
     KeyVec,
     (
@@ -935,7 +936,8 @@ fn create_batch_from_map(
     Ok(batch)
 }
 
-pub(crate) fn write_group_result_row(
+#[allow(missing_docs)]
+pub fn write_group_result_row(
     mode: AggregateMode,
     group_by_values: &[GroupByScalar],
     accumulator_set: &AccumulatorSet,
@@ -968,7 +970,8 @@ pub(crate) fn write_group_result_row(
     finalize_aggregation_into(&accumulator_set, &mode, value_columns)
 }
 
-pub(crate) fn create_accumulators(
+#[allow(missing_docs)]
+pub fn create_accumulators(
     aggr_expr: &Vec<Arc<dyn AggregateExpr>>,
 ) -> Result<AccumulatorSet> {
     aggr_expr
@@ -1375,7 +1378,7 @@ fn finalize_aggregation(
 }
 
 /// Create a Box<[GroupByScalar]> for the group by values
-pub(crate) fn create_group_by_values(
+pub fn create_group_by_values(
     group_by_keys: &[ArrayRef],
     row: usize,
     vec: &mut SmallVec<[GroupByScalar; 2]>,
