@@ -200,6 +200,10 @@ impl ScalarValue {
             ScalarValue::Int16(Some(v)) => ScalarValue::Int16(Some(-v)),
             ScalarValue::Int32(Some(v)) => ScalarValue::Int32(Some(-v)),
             ScalarValue::Int64(Some(v)) => ScalarValue::Int64(Some(-v)),
+            ScalarValue::Int64Decimal(Some(v), s) => {
+                ScalarValue::Int64Decimal(Some(-v), *s)
+            }
+
             _ => panic!("Cannot run arithmetic negate on scala value: {:?}", self),
         }
     }
@@ -217,6 +221,7 @@ impl ScalarValue {
                 | ScalarValue::Int16(None)
                 | ScalarValue::Int32(None)
                 | ScalarValue::Int64(None)
+                | ScalarValue::Int64Decimal(None, _)
                 | ScalarValue::Float32(None)
                 | ScalarValue::Float64(None)
                 | ScalarValue::Utf8(None)
