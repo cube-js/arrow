@@ -2839,6 +2839,13 @@ pub fn if_then_else(
             true_values,
             false_values
         ),
+        DataType::Binary => if_then_else!(
+            array::BinaryBuilder,
+            array::BinaryArray,
+            bools,
+            true_values,
+            false_values
+        ),
         other => Err(DataFusionError::Execution(format!(
             "CASE does not support '{:?}'",
             other
@@ -2890,6 +2897,7 @@ fn build_null_array(data_type: &DataType, num_rows: usize) -> Result<ArrayRef> {
         DataType::Float32 => make_null_array!(array::Float32Builder, num_rows),
         DataType::Float64 => make_null_array!(array::Float64Builder, num_rows),
         DataType::Utf8 => make_null_array!(array::StringBuilder, num_rows),
+        DataType::Binary => make_null_array!(array::BinaryBuilder, num_rows),
         other => Err(DataFusionError::Execution(format!(
             "CASE does not support '{:?}'",
             other
@@ -2961,6 +2969,7 @@ fn array_equals(
         DataType::Float32 => array_equals!(array::Float32Array, when_value, base_value),
         DataType::Float64 => array_equals!(array::Float64Array, when_value, base_value),
         DataType::Utf8 => array_equals!(array::StringArray, when_value, base_value),
+        DataType::Binary => array_equals!(array::BinaryArray, when_value, base_value),
         other => Err(DataFusionError::Execution(format!(
             "CASE does not support '{:?}'",
             other
