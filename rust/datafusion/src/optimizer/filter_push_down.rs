@@ -377,8 +377,8 @@ fn optimize(plan: &LogicalPlan, mut state: State) -> Result<LogicalPlan> {
             // sort is filter-commutable
             push_down(&state, plan)
         }
-        LogicalPlan::Limit { input, .. } => {
-            // limit is _not_ filter-commutable => collect all columns from its input
+        LogicalPlan::Limit { input, .. } | LogicalPlan::Skip { input, .. } => {
+            // limit and skip are _not_ filter-commutable => collect all columns from its input
             let used_columns = input
                 .schema()
                 .fields()

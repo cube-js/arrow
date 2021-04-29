@@ -42,8 +42,8 @@ use arrow::datatypes::*;
 use crate::prelude::JoinType;
 use sqlparser::ast::{
     BinaryOperator, DataType as SQLDataType, Expr as SQLExpr, FunctionArg, Join,
-    JoinConstraint, JoinOperator, Query, Select, SelectItem, SetExpr, SetOperator,
-    TableFactor, TableWithJoins, UnaryOperator, Value,
+    JoinConstraint, JoinOperator, Offset, Query, Select, SelectItem, SetExpr,
+    SetOperator, TableFactor, TableWithJoins, UnaryOperator, Value,
 };
 use sqlparser::ast::{ColumnDef as SQLColumnDef, ColumnOption};
 use sqlparser::ast::{OrderByExpr, Statement};
@@ -118,6 +118,8 @@ impl<'a, S: ContextProvider> SqlToRel<'a, S> {
         let plan = self.set_expr_to_plan(set_expr, alias)?;
 
         let plan = self.order_by(&plan, &query.order_by)?;
+
+        let plan = self.skip_rows(&plan, &query.offset)?;
 
         self.limit(&plan, &query.limit)
     }
@@ -614,6 +616,27 @@ impl<'a, S: ContextProvider> SqlToRel<'a, S> {
         }
 
         Ok((plan, select_exprs_post_aggr))
+    }
+
+    /// Return a plan that skips first [count] rows
+    fn skip_rows(
+        &self,
+        input: &LogicalPlan,
+        count: &Option<Offset>,
+    ) -> Result<LogicalPlan> {
+        match count {
+            Some(Offset { value, rows: _ }) => {
+                let n = match self.sql_to_rex(&value, &input.schema())? {
+                    Expr::Literal(ScalarValue::Int64(Some(n))) => Ok(n as usize),
+                    _ => Err(DataFusionError::Plan(
+                        "Unexpected expression for OFFSET clause".to_string(),
+                    )),
+                }?;
+
+                LogicalPlanBuilder::from(&input).skip(n)?.build()
+            }
+            _ => Ok(input.clone()),
+        }
     }
 
     /// Wrap a plan in a limit

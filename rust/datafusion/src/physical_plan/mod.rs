@@ -318,6 +318,7 @@ pub mod parquet;
 pub mod planner;
 pub mod projection;
 pub mod repartition;
+pub mod skip;
 pub mod sort;
 mod sorted_aggregate;
 pub mod string_expressions;

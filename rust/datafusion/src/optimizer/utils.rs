@@ -151,6 +151,7 @@ pub fn expressions(plan: &LogicalPlan) -> Vec<Expr> {
         LogicalPlan::TableScan { .. }
         | LogicalPlan::EmptyRelation { .. }
         | LogicalPlan::Limit { .. }
+        | LogicalPlan::Skip { .. }
         | LogicalPlan::CreateExternalTable { .. }
         | LogicalPlan::Explain { .. } => vec![],
         LogicalPlan::Union { .. } => vec![],
@@ -167,6 +168,7 @@ pub fn inputs(plan: &LogicalPlan) -> Vec<&LogicalPlan> {
         LogicalPlan::Sort { input, .. } => vec![input],
         LogicalPlan::Join { left, right, .. } => vec![left, right],
         LogicalPlan::Limit { input, .. } => vec![input],
+        LogicalPlan::Skip { input, .. } => vec![input],
         LogicalPlan::Extension { node } => node.inputs(),
         // plans without inputs
         LogicalPlan::TableScan { .. }
@@ -233,6 +235,10 @@ pub fn from_plan(
             schema: schema.clone(),
         }),
         LogicalPlan::Limit { n, .. } => Ok(LogicalPlan::Limit {
+            n: *n,
+            input: Arc::new(inputs[0].clone()),
+        }),
+        LogicalPlan::Skip { n, .. } => Ok(LogicalPlan::Skip {
             n: *n,
             input: Arc::new(inputs[0].clone()),
         }),

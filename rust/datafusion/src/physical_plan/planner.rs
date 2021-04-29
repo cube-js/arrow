@@ -52,6 +52,7 @@ use crate::scalar::ScalarValue;
 use crate::variable::VarType;
 use arrow::compute::can_cast_types;
 
+use crate::physical_plan::skip::SkipExec;
 use arrow::compute::SortOptions;
 use arrow::datatypes::SchemaRef;
 use expressions::col;
@@ -473,6 +474,12 @@ impl DefaultPhysicalPlanner {
                     limit,
                     ctx_state.config.concurrency,
                 )))
+            }
+            LogicalPlan::Skip { input, n, .. } => {
+                let skip = *n;
+                let input = self.create_physical_plan(input, ctx_state)?;
+
+                Ok(Arc::new(SkipExec::new(input, skip)))
             }
             LogicalPlan::CreateExternalTable { .. } => {
                 // There is no default plan for "CREATE EXTERNAL

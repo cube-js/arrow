@@ -156,6 +156,13 @@ pub enum LogicalPlan {
         /// The logical plan
         input: Arc<LogicalPlan>,
     },
+    /// Skips the first `n` tuples from its inputs and produces the rest.
+    Skip {
+        /// The number of rows to skip
+        n: usize,
+        /// The logical plan
+        input: Arc<LogicalPlan>,
+    },
     /// Creates an external table.
     CreateExternalTable {
         /// The table schema
@@ -203,6 +210,7 @@ impl LogicalPlan {
             LogicalPlan::Join { schema, .. } => &schema,
             LogicalPlan::Repartition { input, .. } => input.schema(),
             LogicalPlan::Limit { input, .. } => input.schema(),
+            LogicalPlan::Skip { input, .. } => input.schema(),
             LogicalPlan::CreateExternalTable { schema, .. } => &schema,
             LogicalPlan::Explain { schema, .. } => &schema,
             LogicalPlan::Extension { node } => &node.schema(),
@@ -306,6 +314,7 @@ impl LogicalPlan {
                 .into_iter()
                 .all(|b| b),
             LogicalPlan::Limit { input, .. } => input.accept(visitor)?,
+            LogicalPlan::Skip { input, .. } => input.accept(visitor)?,
             LogicalPlan::Extension { node } => {
                 for input in node.inputs() {
                     if !input.accept(visitor)? {
@@ -583,6 +592,7 @@ impl LogicalPlan {
                         }
                     },
                     LogicalPlan::Limit { ref n, .. } => write!(f, "Limit: {}", n),
+                    LogicalPlan::Skip { ref n, .. } => write!(f, "Skip: {}", n),
                     LogicalPlan::CreateExternalTable { ref name, .. } => {
                         write!(f, "CreateExternalTable: {:?}", name)
                     }

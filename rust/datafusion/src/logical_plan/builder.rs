@@ -183,6 +183,14 @@ impl LogicalPlanBuilder {
         }))
     }
 
+    /// Skip n rows
+    pub fn skip(&self, n: usize) -> Result<Self> {
+        Ok(Self::from(&LogicalPlan::Skip {
+            n,
+            input: Arc::new(self.plan.clone()),
+        }))
+    }
+
     /// Apply a sort
     pub fn sort(&self, expr: Vec<Expr>) -> Result<Self> {
         Ok(Self::from(&LogicalPlan::Sort {
