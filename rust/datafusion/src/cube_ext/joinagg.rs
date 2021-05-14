@@ -19,7 +19,7 @@
 use crate::cube_ext::join::{left_cross_join, plan_cross_join, CrossJoin, CrossJoinExec};
 use crate::cube_ext::stream::StreamWithSchema;
 use crate::error::Result;
-use crate::execution::context::ExecutionContextState;
+use crate::execution::context::{ExecutionContextState, ExecutionProps};
 use crate::logical_plan::{DFSchemaRef, Expr, LogicalPlan, UserDefinedLogicalNode};
 use crate::optimizer::optimizer::OptimizerRule;
 use crate::optimizer::utils::from_plan;
@@ -92,11 +92,11 @@ impl UserDefinedLogicalNode for CrossJoinAgg {
 
 pub struct FoldCrossJoinAggregate;
 impl OptimizerRule for FoldCrossJoinAggregate {
-    fn optimize(&self, plan: &LogicalPlan) -> Result<LogicalPlan> {
+    fn optimize(&self, plan: &LogicalPlan, execution_props: &ExecutionProps) -> Result<LogicalPlan> {
         let inputs = plan
             .inputs()
             .into_iter()
-            .map(|i| self.optimize(i))
+            .map(|i| self.optimize(i, execution_props))
             .collect::<Result<Vec<_>>>()?;
         let exprs = plan.expressions();
 
