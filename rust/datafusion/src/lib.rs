@@ -200,6 +200,9 @@ pub mod scalar;
 pub mod sql;
 pub mod variable;
 
+#[allow(missing_docs)]
+pub mod cube_ext;
+
 #[cfg(test)]
 pub mod test;
 

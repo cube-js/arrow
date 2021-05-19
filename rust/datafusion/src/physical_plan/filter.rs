@@ -205,7 +205,7 @@ struct FilterExecStream {
     input: SendableRecordBatchStream,
 }
 
-fn batch_filter(
+pub(crate) fn batch_filter(
     batch: &RecordBatch,
     predicate: &Arc<dyn PhysicalExpr>,
 ) -> ArrowResult<RecordBatch> {

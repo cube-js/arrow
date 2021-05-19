@@ -35,6 +35,7 @@ use super::dfschema::ToDFSchema;
 use super::{
     col, exprlist_to_fields, Expr, JoinType, LogicalPlan, PlanType, StringifiedPlan,
 };
+use crate::cube_ext::join::CrossJoin;
 use crate::logical_plan::{DFField, DFSchema, DFSchemaRef, Partitioning};
 use std::collections::HashSet;
 
@@ -291,6 +292,24 @@ impl LogicalPlanBuilder {
                 schema: DFSchemaRef::new(join_schema),
             }))
         }
+    }
+
+    /// Apply a join with complex condition
+    pub fn cross_join(&self, right: &LogicalPlan, on: &Expr) -> Result<Self> {
+        let schema = Arc::new(build_join_schema(
+            self.plan.schema(),
+            right.schema(),
+            &[],
+            &JoinType::Left,
+        )?);
+        Ok(Self::from(&LogicalPlan::Extension {
+            node: Arc::new(CrossJoin {
+                schema,
+                left: self.plan.clone(),
+                right: right.clone(),
+                on: on.clone(),
+            }),
+        }))
     }
 
     /// Repartition

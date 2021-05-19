@@ -52,6 +52,8 @@ use crate::scalar::ScalarValue;
 use crate::variable::VarType;
 use arrow::compute::can_cast_types;
 
+use crate::cube_ext::join::CrossJoinPlanner;
+use crate::cube_ext::joinagg::CrossJoinAggPlanner;
 use crate::physical_plan::alias::AliasedSchemaExec;
 use crate::physical_plan::skip::SkipExec;
 use arrow::array::Int32Array;
@@ -85,7 +87,10 @@ pub struct DefaultPhysicalPlanner {
 impl Default for DefaultPhysicalPlanner {
     fn default() -> Self {
         Self {
-            extension_planners: vec![],
+            extension_planners: vec![
+                Arc::new(CrossJoinPlanner {}),
+                Arc::new(CrossJoinAggPlanner {}),
+            ],
         }
     }
 }
@@ -108,8 +113,10 @@ impl DefaultPhysicalPlanner {
     /// The planner uses the first [`ExtensionPlanner`] to return a non-`None`
     /// plan.
     pub fn with_extension_planners(
-        extension_planners: Vec<Arc<dyn ExtensionPlanner + Send + Sync>>,
+        mut extension_planners: Vec<Arc<dyn ExtensionPlanner + Send + Sync>>,
     ) -> Self {
+        extension_planners.insert(0, Arc::new(CrossJoinPlanner {}));
+        extension_planners.insert(1, Arc::new(CrossJoinAggPlanner {}));
         Self { extension_planners }
     }
 

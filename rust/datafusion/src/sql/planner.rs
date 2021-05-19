@@ -60,6 +60,7 @@ use super::{
         find_aggregate_exprs, find_column_exprs, rebase_expr, resolve_aliases_to_exprs,
     },
 };
+use crate::cube_ext::join::contains_table_scan;
 use crate::physical_plan::expressions::Column;
 use crate::sql::utils::clone_with_replacement;
 
@@ -157,6 +158,7 @@ impl<'a, S: ContextProvider> SqlToRel<'a, S> {
         ctes: &mut HashMap<String, LogicalPlan>,
     ) -> Result<LogicalPlan> {
         match set_expr {
+            SetExpr::Query(q) => self.query_to_plan_with_alias(&q, None, ctes),
             SetExpr::Select(s) => self.select_to_plan(s.as_ref(), ctes),
             SetExpr::SetOperation {
                 op,
@@ -198,7 +200,7 @@ impl<'a, S: ContextProvider> SqlToRel<'a, S> {
                 ))),
             },
             _ => Err(DataFusionError::NotImplemented(format!(
-                "Query {} not implemented yet",
+                "Query {:?} not implemented yet",
                 set_expr
             ))),
         }
@@ -384,7 +386,19 @@ impl<'a, S: ContextProvider> SqlToRel<'a, S> {
                 let expr = self.sql_to_rex(sql_expr, &join_schema)?;
 
                 // extract join keys
-                extract_join_keys(&expr, &mut keys)?;
+                if let Err(e) = extract_join_keys(&expr, &mut keys) {
+                    // Complex condition, try cross join. We still prefer to **not** allow cross
+                    // joins in general case to avoid abysmal performance.
+                    // However, CubeStore needs this specific form for "rolling window" queries.
+                    // TODO: take join_type into account.
+                    if !contains_table_scan(left) {
+                        return LogicalPlanBuilder::from(&left)
+                            .cross_join(right, &expr)?
+                            .build();
+                    } else {
+                        return Err(e);
+                    }
+                }
                 let left_keys: Vec<&str> =
                     keys.iter().map(|pair| pair.0.as_str()).collect();
                 let right_keys: Vec<&str> =

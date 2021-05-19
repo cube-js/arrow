@@ -61,7 +61,9 @@ impl PhysicalExpr for Literal {
     }
 
     fn nullable(&self, _input_schema: &DFSchema) -> Result<bool> {
-        Ok(self.value.is_null())
+        // TODO: figure out how to do it properly.
+        // Ok(self.value.is_null())
+        Ok(true)
     }
 
     fn evaluate(&self, _batch: &RecordBatch) -> Result<ColumnarValue> {

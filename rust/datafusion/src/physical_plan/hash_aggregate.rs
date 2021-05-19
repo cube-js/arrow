@@ -129,7 +129,7 @@ pub struct HashAggregateExec {
     output_rows: Arc<Mutex<SQLMetric>>,
 }
 
-fn create_schema(
+pub(crate) fn create_schema(
     input_schema: &DFSchema,
     group_expr: &[(Arc<dyn PhysicalExpr>, String)],
     aggr_expr: &[Arc<dyn AggregateExpr>],
@@ -351,13 +351,14 @@ pin_project! {
     }
 }
 
-fn group_aggregate_batch(
+pub(crate) fn group_aggregate_batch(
     mode: &AggregateMode,
     group_expr: &[Arc<dyn PhysicalExpr>],
     aggr_expr: &[Arc<dyn AggregateExpr>],
     batch: RecordBatch,
     mut accumulators: Accumulators,
     aggregate_expressions: &[Vec<Arc<dyn PhysicalExpr>>],
+    skip_row: impl Fn(&RecordBatch, /*row_index*/ usize) -> bool,
 ) -> Result<Accumulators> {
     // evaluate the grouping expressions
     let group_values = evaluate(group_expr, &batch)?;
@@ -385,6 +386,9 @@ fn group_aggregate_batch(
     let mut batch_keys = BinaryBuilder::new(0);
 
     for row in 0..batch.num_rows() {
+        if skip_row(&batch, row) {
+            continue;
+        }
         // 1.1
         create_key(&group_values, row, &mut key)
             .map_err(DataFusionError::into_arrow_external_error)?;
@@ -714,6 +718,7 @@ async fn compute_grouped_hash_aggregate(
             batch,
             accumulators,
             &aggregate_expressions,
+            |_, _| false,
         )
         .map_err(DataFusionError::into_arrow_external_error)?;
     }
@@ -771,11 +776,13 @@ impl GroupedHashAggregateStream {
     }
 }
 
-type KeyVec = SmallVec<[u8; 64]>;
+#[allow(missing_docs)]
+pub type KeyVec = SmallVec<[u8; 64]>;
 type AccumulatorItem = Box<dyn Accumulator>;
 #[allow(missing_docs)]
 pub type AccumulatorSet = SmallVec<[AccumulatorItem; 2]>;
-type Accumulators = HashMap<
+#[allow(missing_docs)]
+pub type Accumulators = HashMap<
     KeyVec,
     (
         SmallVec<[GroupByScalar; 2]>,
@@ -831,7 +838,7 @@ impl RecordBatchStream for GroupedHashAggregateStream {
 }
 
 /// Evaluates expressions against a record batch.
-fn evaluate(
+pub(crate) fn evaluate(
     expr: &[Arc<dyn PhysicalExpr>],
     batch: &RecordBatch,
 ) -> Result<Vec<ArrayRef>> {
@@ -842,7 +849,7 @@ fn evaluate(
 }
 
 /// Evaluates expressions against a record batch.
-fn evaluate_many(
+pub(crate) fn evaluate_many(
     expr: &[Vec<Arc<dyn PhysicalExpr>>],
     batch: &RecordBatch,
 ) -> Result<Vec<Vec<ArrayRef>>> {
@@ -869,7 +876,7 @@ fn merge_expressions(
 /// The return value is to be understood as:
 /// * index 0 is the aggregation
 /// * index 1 is the expression i of the aggregation
-fn aggregate_expressions(
+pub(crate) fn aggregate_expressions(
     aggr_expr: &[Arc<dyn AggregateExpr>],
     mode: &AggregateMode,
 ) -> Result<Vec<Vec<Arc<dyn PhysicalExpr>>>> {
@@ -1019,7 +1026,7 @@ impl RecordBatchStream for HashAggregateStream {
 }
 
 /// Create a RecordBatch with all group keys and accumulator' states or values.
-fn create_batch_from_map(
+pub(crate) fn create_batch_from_map(
     mode: &AggregateMode,
     accumulators: &Accumulators,
     num_group_expr: usize,

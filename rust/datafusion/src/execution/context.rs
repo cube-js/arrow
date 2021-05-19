@@ -60,6 +60,7 @@ use crate::optimizer::projection_push_down::ProjectionPushDown;
 use crate::physical_optimizer::merge_exec::AddMergeExec;
 use crate::physical_optimizer::repartition::Repartition;
 
+use crate::cube_ext::joinagg::FoldCrossJoinAggregate;
 use crate::physical_plan::csv::CsvReadOptions;
 use crate::physical_plan::planner::DefaultPhysicalPlanner;
 use crate::physical_plan::udf::ScalarUDF;
@@ -641,6 +642,7 @@ impl ExecutionConfig {
                 Arc::new(FilterPushDown::new()),
                 Arc::new(HashBuildProbeOrder::new()),
                 Arc::new(LimitPushDown::new()),
+                Arc::new(FoldCrossJoinAggregate {}), // CubeStore extension.
             ],
             physical_optimizers: vec![
                 // NOTE: disabled in the CubeStore fork.
