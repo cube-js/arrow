@@ -60,6 +60,7 @@ use super::{
         find_aggregate_exprs, find_column_exprs, rebase_expr, resolve_aliases_to_exprs,
     },
 };
+use crate::cube_ext::alias::LogicalAlias;
 use crate::cube_ext::join::contains_table_scan;
 use crate::physical_plan::expressions::Column;
 use crate::sql::utils::clone_with_replacement;
@@ -158,8 +159,17 @@ impl<'a, S: ContextProvider> SqlToRel<'a, S> {
         ctes: &mut HashMap<String, LogicalPlan>,
     ) -> Result<LogicalPlan> {
         match set_expr {
-            SetExpr::Query(q) => self.query_to_plan_with_alias(&q, None, ctes),
-            SetExpr::Select(s) => self.select_to_plan(s.as_ref(), ctes),
+            SetExpr::Query(q) => self.query_to_plan_with_alias(&q, alias, ctes),
+            SetExpr::Select(s) => {
+                let plan = self.select_to_plan(s.as_ref(), ctes)?;
+                if let Some(alias) = alias {
+                    Ok(LogicalPlan::Extension {
+                        node: Arc::new(LogicalAlias::new(plan, alias)?),
+                    })
+                } else {
+                    Ok(plan)
+                }
+            }
             SetExpr::SetOperation {
                 op,
                 left,

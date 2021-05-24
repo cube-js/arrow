@@ -18,6 +18,7 @@
 //! Projection Push Down optimizer rule ensures that only referenced columns are
 //! loaded into memory
 
+use crate::cube_ext::alias::LogicalAlias;
 use crate::error::Result;
 use crate::logical_plan::{DFField, DFSchema, DFSchemaRef, LogicalPlan, ToDFSchema};
 use crate::optimizer::optimizer::OptimizerRule;
@@ -279,6 +280,17 @@ fn optimize_plan(
         | LogicalPlan::Sort { .. }
         | LogicalPlan::CreateExternalTable { .. }
         | LogicalPlan::Extension { .. } => {
+            match plan {
+                LogicalPlan::Extension { node } => {
+                    if let Some(alias) = node.as_any().downcast_ref::<LogicalAlias>() {
+                        new_required_columns = unalias_required_columns(
+                            alias.input.schema(),
+                            &new_required_columns,
+                        );
+                    }
+                }
+                _ => {}
+            }
             let expr = plan.expressions();
             // collect all required columns by this plan
             utils::exprlist_to_column_names(&expr, &mut new_required_columns)?;
@@ -304,17 +316,7 @@ fn optimize_plan(
                     optimize_plan(
                         optimizer,
                         plan,
-                        &new_required_columns
-                            .iter()
-                            .map(|col| -> Result<String> {
-                                Ok(original_schema
-                                    .field_with_unqualified_name(
-                                        col.split('.').last().unwrap(),
-                                    )?
-                                    .qualified_name())
-                            })
-                            .filter_map(Result::ok)
-                            .collect::<HashSet<_>>(),
+                        &unalias_required_columns(original_schema, &new_required_columns),
                         has_projection,
                     )
                 })
@@ -323,6 +325,23 @@ fn optimize_plan(
             utils::from_plan(plan, &expr, &new_inputs)
         }
     }
+}
+
+fn unalias_required_columns(
+    unaliased_schema: &DFSchema,
+    required_columns: &HashSet<String>,
+) -> HashSet<String> {
+    // TODO: we only remove `alias` we are stripping into account.
+    let mut stripped_columns = HashSet::new();
+    for c in required_columns {
+        match unaliased_schema.field_with_unqualified_name(c.split('.').last().unwrap()) {
+            Ok(f) => {
+                stripped_columns.insert(f.qualified_name());
+            }
+            Err(_) => continue,
+        }
+    }
+    stripped_columns
 }
 
 #[cfg(test)]
