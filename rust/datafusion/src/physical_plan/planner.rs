@@ -530,7 +530,7 @@ impl DefaultPhysicalPlanner {
                 // Ensure the ExecutionPlan's  schema matches the
                 // declared logical schema to catch and warn about
                 // logic errors when creating user defined plans.
-                if plan.schema() != node.schema().as_ref().to_owned().into() {
+                if !Self::logical_schema_matches_physical(node.schema(), &plan.schema()) {
                     Err(DataFusionError::Plan(format!(
                         "Extension planner for {:?} created an ExecutionPlan with mismatched schema. \
                          LogicalPlan schema: {:?}, ExecutionPlan schema: {:?}",
@@ -541,6 +541,27 @@ impl DefaultPhysicalPlanner {
                 }
             }
         }
+    }
+
+    fn logical_schema_matches_physical(logical: &DFSchema, physical: &DFSchema) -> bool {
+        let logical = logical.fields();
+        let physical = physical.fields();
+        if logical.len() != physical.len() {
+            return false;
+        }
+
+        for i in 0..logical.len() {
+            if logical[i].data_type() != physical[i].data_type()
+                || logical[i].qualifier() != physical[i].qualifier()
+                || logical[i].name() != physical[i].name()
+            {
+                return false;
+            }
+            // We do not check for mismatch in nullable():
+            //  - binary expressions can become nullable because of the added TryCast nodes,
+            //  - constant evaluation can turn nullable expressions to non-nullable.
+        }
+        return true;
     }
 
     fn merge_sort_node(
