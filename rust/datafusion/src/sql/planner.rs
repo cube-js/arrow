@@ -567,8 +567,9 @@ impl<'a, S: ContextProvider> SqlToRel<'a, S> {
             .having
             .as_ref()
             .map::<Result<Expr>, _>(|having_expr| {
-                let having_expr = self.sql_expr_to_logical_expr(having_expr)?;
-
+                // CubeStore: the schema does not see aliases from expression. We do this to support
+                // queries of the form `SELECT sum(n) as n … HAVING sum(n) < 10`, sent by CubeJS.
+                let mut having_expr = self.sql_to_rex(having_expr, plan.schema())?;
                 // This step "dereferences" any aliases in the HAVING clause.
                 //
                 // This is how we support queries with HAVING expressions that
@@ -584,11 +585,13 @@ impl<'a, S: ContextProvider> SqlToRel<'a, S> {
                 //   SELECT c1 AS m FROM t HAVING c1 > 10;
                 //   SELECT c1, MAX(c2) AS m FROM t GROUP BY c1 HAVING MAX(c2) > 10;
                 //
-                let having_expr = resolve_aliases_to_exprs(
-                    &having_expr,
-                    &extract_aliases(&select_exprs),
-                )?;
-
+                if false {
+                    // Disabled in CubeStore.
+                    having_expr = resolve_aliases_to_exprs(
+                        &having_expr,
+                        &extract_aliases(&select_exprs),
+                    )?;
+                }
                 Ok(having_expr)
             })
             .transpose()?;
@@ -1941,6 +1944,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "fails in CubeStore fork"]
     fn select_aggregate_aliased_with_having_referencing_aggregate_by_its_alias() {
         let sql = "SELECT MAX(age) as max_age
                    FROM person
@@ -2006,6 +2010,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "fails in CubeStore fork"]
     fn select_aggregate_with_group_by_with_having_using_column_by_alias() {
         let sql = "SELECT first_name AS fn, MAX(age)
                    FROM person
@@ -2019,6 +2024,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "fails in CubeStore fork"]
     fn select_aggregate_with_group_by_with_having_using_columns_with_and_without_their_aliases(
     ) {
         let sql = "SELECT first_name AS fn, MAX(age) AS max_age
@@ -2083,6 +2089,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "fails in CubeStore fork"]
     fn select_aggregate_aliased_with_group_by_with_having_referencing_aggregate_by_its_alias(
     ) {
         let sql = "SELECT first_name, MAX(age) AS max_age
@@ -2097,6 +2104,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "fails in CubeStore fork"]
     fn select_aggregate_compound_aliased_with_group_by_with_having_referencing_compound_aggregate_by_its_alias(
     ) {
         let sql = "SELECT first_name, MAX(age) + 1 AS max_age_plus_one

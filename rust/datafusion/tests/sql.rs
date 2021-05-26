@@ -450,7 +450,7 @@ async fn csv_query_group_by_two_columns() -> Result<()> {
 async fn csv_query_group_by_and_having() -> Result<()> {
     let mut ctx = ExecutionContext::new();
     register_aggregate_csv(&mut ctx)?;
-    let sql = "SELECT c1, MIN(c3) AS m FROM aggregate_test_100 GROUP BY c1 HAVING m < -100 AND MAX(c3) > 70";
+    let sql = "SELECT c1, MIN(c3) AS m FROM aggregate_test_100 GROUP BY c1 HAVING MIN(c3) < -100 AND MAX(c3) > 70";
     let mut actual = execute(&mut ctx, sql).await;
     actual.sort();
     let expected = vec![vec!["a", "-101"], vec!["c", "-117"]];
@@ -466,7 +466,7 @@ async fn csv_query_group_by_and_having_and_where() -> Result<()> {
                FROM aggregate_test_100
                WHERE c1 IN ('a', 'b')
                GROUP BY c1
-               HAVING m < -100 AND MAX(c3) > 70";
+               HAVING MIN(c3) < -100 AND MAX(c3) > 70";
     let mut actual = execute(&mut ctx, sql).await;
     actual.sort();
     let expected = vec![vec!["a", "-101"]];
