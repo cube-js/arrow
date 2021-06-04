@@ -27,7 +27,7 @@ use futures::stream::StreamExt;
 
 use crate::error::{DataFusionError, Result};
 use crate::physical_plan::{Distribution, ExecutionPlan, OptimizerHints, Partitioning};
-use arrow::array::ArrayRef;
+use arrow::array::{make_array, ArrayRef, MutableArrayData};
 use arrow::datatypes::SchemaRef;
 use arrow::error::Result as ArrowResult;
 use arrow::record_batch::RecordBatch;
@@ -158,8 +158,16 @@ fn skip_first_rows(batch: &RecordBatch, n: usize) -> RecordBatch {
     let sliced_columns: Vec<ArrayRef> = batch
         .columns()
         .iter()
-        .map(|c| c.slice(n, c.len() - n))
+        .map(|c| {
+            // We only do the copy to make sure IPC serialization does not mess up later.
+            // Currently, after a roundtrip through IPC, arrays always start at offset 0.
+            // TODO: fix IPC serialization and use c.slice().
+            let mut data = MutableArrayData::new(vec![c.data()], false, c.len() - n);
+            data.extend(0, n, c.len());
+            make_array(data.freeze())
+        })
         .collect();
+
     RecordBatch::try_new(batch.schema(), sliced_columns).unwrap()
 }
 
