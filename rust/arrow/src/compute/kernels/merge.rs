@@ -23,6 +23,7 @@ use crate::array::*;
 use crate::datatypes::*;
 use crate::error::{ArrowError, Result};
 
+use crate::compute::{total_cmp_32, total_cmp_64};
 use core::fmt;
 use std::cmp::{Ordering, Reverse};
 use std::collections::BinaryHeap;
@@ -308,6 +309,12 @@ fn comparators_for<'a>(
             DataType::UInt64 => {
                 Box::new(PrimitiveComparator::<UInt64Type>::new(to_compare))
             }
+            DataType::Float64 => {
+                Box::new(FloatComparator::<Float64Type>::new(&to_compare))
+            }
+            DataType::Float32 => {
+                Box::new(FloatComparator::<Float32Type>::new(&to_compare))
+            }
             DataType::Time32(TimeUnit::Second) => {
                 Box::new(PrimitiveComparator::<Time32SecondType>::new(to_compare))
             }
@@ -562,6 +569,83 @@ impl<'a> ArrayComparator for BooleanComparator<'a> {
             let left_value = left.value(left_row_index);
             let right_value = right.value(right_row_index);
             left_value.cmp(&right_value)
+        }
+    }
+
+    fn within_range(&self, array_index: usize, row_index: usize) -> bool {
+        row_index < self.arrays[array_index].len()
+    }
+
+    fn debug_value(&self, array_index: usize, row_index: usize) -> Box<dyn Debug> {
+        Box::new(self.arrays[array_index].value(row_index))
+    }
+
+    fn is_valid(&self, array_index: usize, row_index: usize) -> bool {
+        self.arrays[array_index].is_valid(row_index)
+    }
+}
+
+#[derive(Debug)]
+struct FloatComparator<'a, F: ArrowPrimitiveType> {
+    arrays: Vec<&'a PrimitiveArray<F>>,
+}
+
+trait FloatCmp {
+    fn total_cmp(self, r: Self) -> Ordering;
+}
+
+impl FloatCmp for f64 {
+    fn total_cmp(self, r: Self) -> Ordering {
+        total_cmp_64(self, r)
+    }
+}
+
+impl FloatCmp for f32 {
+    fn total_cmp(self, r: Self) -> Ordering {
+        total_cmp_32(self, r)
+    }
+}
+impl<'a, F> FloatComparator<'a, F>
+where
+    F: ArrowPrimitiveType,
+    F::Native: FloatCmp,
+{
+    pub fn new(arrays: &[&'a ArrayRef]) -> Self {
+        Self {
+            arrays: arrays
+                .into_iter()
+                .map(|array| array.as_any().downcast_ref::<PrimitiveArray<F>>().unwrap())
+                .collect(),
+        }
+    }
+}
+
+impl<'a, F> ArrayComparator for FloatComparator<'a, F>
+where
+    F: ArrowPrimitiveType,
+    F::Native: FloatCmp,
+{
+    fn compare(
+        &self,
+        left_array_index: usize,
+        left_row_index: usize,
+        right_array_index: usize,
+        right_row_index: usize,
+    ) -> Ordering {
+        let left = self.arrays[left_array_index];
+        let right = self.arrays[right_array_index];
+        let left_null = left.is_null(left_row_index);
+        let right_null = right.is_null(right_row_index);
+        if left_null && right_null {
+            Ordering::Equal
+        } else if right_null {
+            Ordering::Greater
+        } else if left_null {
+            Ordering::Less
+        } else {
+            let left_value = left.value(left_row_index);
+            let right_value = right.value(right_row_index);
+            left_value.total_cmp(right_value)
         }
     }
 
