@@ -20,3 +20,4 @@ pub mod join;
 pub mod joinagg;
 pub mod sequence;
 pub mod stream;
+pub mod util;

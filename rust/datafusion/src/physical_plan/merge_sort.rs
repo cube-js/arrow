@@ -25,23 +25,25 @@ use std::task::{Context, Poll};
 use futures::stream::{Fuse, Stream};
 use futures::StreamExt;
 
+use arrow::array::ArrayRef;
 pub use arrow::compute::SortOptions;
-use arrow::compute::{is_not_null, lexsort_to_indices, take, SortColumn, TakeOptions};
+use arrow::compute::{lexsort_to_indices, take, SortColumn, TakeOptions};
 use arrow::datatypes::SchemaRef;
 use arrow::error::Result as ArrowResult;
 use arrow::record_batch::RecordBatch;
-use arrow::{array::ArrayRef, error::ArrowError};
 
 use super::{RecordBatchStream, SendableRecordBatchStream};
 use crate::error::{DataFusionError, Result};
-use crate::physical_plan::expressions::if_then_else;
 use crate::physical_plan::{ExecutionPlan, OptimizerHints, Partitioning};
 
+use crate::cube_ext::util::cmp_array_row_same_types;
 use crate::logical_plan::DFSchemaRef;
 use crate::physical_plan::memory::MemoryStream;
-use arrow::compute::kernels::merge::merge_sort_indices;
+use arrow::array::{make_array, MutableArrayData};
 use async_trait::async_trait;
 use futures::future::join_all;
+use std::cmp::{Ordering, Reverse};
+use std::collections::BinaryHeap;
 
 /// Sort execution plan
 #[derive(Debug)]
@@ -351,6 +353,8 @@ impl Stream for MergeSortStream {
             state.update_state(cx);
         }
 
+        // TODO: pass the value from ExecutionConfig.
+        const MAX_BATCH_ROWS: usize = 4096;
         if self.poll_states.iter().all(|s| s.poll_state.is_ready()) {
             let res = self
                 .poll_states
@@ -370,8 +374,9 @@ impl Stream for MergeSortStream {
                         return Ok(None);
                     }
                     let (new_cursors, sorted_batch) = merge_sort(
-                        batches.iter().map(|(c, b)| (*c, b)).collect(),
-                        self.columns.clone(),
+                        &batches.iter().map(|(c, b)| (*c, b)).collect::<Vec<_>>(),
+                        &self.columns,
+                        MAX_BATCH_ROWS,
                     )?;
 
                     assert_eq!(new_cursors.len(), batches.len());
@@ -391,72 +396,154 @@ impl Stream for MergeSortStream {
 }
 
 fn merge_sort(
-    batches: Vec<(usize, &RecordBatch)>,
-    columns: Vec<String>,
+    batches: &[(usize, &RecordBatch)],
+    columns: &[String],
+    max_batch_rows: usize,
 ) -> ArrowResult<(Vec<usize>, RecordBatch)> {
-    let lasts = (0..batches.len()).map(|_| false).collect::<Vec<_>>();
-    let cursors = batches.iter().map(|(c, _)| *c).collect::<Vec<_>>();
-    let arrays = batches
-        .iter()
-        .map(|(_, batch)| {
-            columns
+    assert!(!columns.is_empty());
+    assert!(!batches.is_empty());
+
+    let mut sort_keys = Vec::with_capacity(batches.len());
+    let mut pos = Vec::with_capacity(batches.len());
+    for (p, b) in batches {
+        let mut key_cols = Vec::with_capacity(columns.len());
+        for c in columns {
+            let i = b.schema().index_of(c)?;
+            key_cols.push(b.column(i));
+        }
+
+        sort_keys.push(key_cols);
+        pos.push(*p);
+    }
+
+    struct Key<'a> {
+        values: &'a [&'a ArrayRef],
+        index: usize,
+        row: usize,
+    }
+    impl PartialEq for Key<'_> {
+        fn eq(&self, other: &Self) -> bool {
+            self.cmp(other) == Ordering::Equal
+        }
+    }
+    impl Eq for Key<'_> {}
+    impl PartialOrd for Key<'_> {
+        fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+            Some(self.cmp(other))
+        }
+    }
+    impl Ord for Key<'_> {
+        fn cmp(&self, other: &Self) -> Ordering {
+            for i in 0..self.values.len() {
+                let o = cmp_array_row_same_types(
+                    &self.values[i],
+                    self.row,
+                    &other.values[i],
+                    other.row,
+                );
+                if o != Ordering::Equal {
+                    return o;
+                }
+            }
+            self.index.cmp(&other.index) // This comparison makes pop order deterministic.
+        }
+    }
+
+    let mut candidates = BinaryHeap::with_capacity(sort_keys.len());
+    for i in 0..sort_keys.len() {
+        if pos[i] == sort_keys[i][0].len() {
+            continue;
+        }
+        let k = Key {
+            values: &sort_keys[i],
+            index: i,
+            row: pos[i],
+        };
+        candidates.push(Reverse(k));
+    }
+
+    let num_cols = batches[0].1.num_columns();
+    let mut result_cols = Vec::with_capacity(num_cols);
+    let mut num_result_rows = 0;
+    for i in 0..num_cols {
+        result_cols.push(MutableArrayData::new(
+            batches.iter().map(|(_, b)| b.column(i).data()).collect(),
+            false,
+            max_batch_rows,
+        ));
+    }
+    while let Some(Reverse(c)) = candidates.pop() {
+        for i in 0..num_cols {
+            result_cols[i].extend(c.index, c.row, c.row + 1);
+        }
+        num_result_rows += 1;
+
+        assert_eq!(pos[c.index], c.row);
+        pos[c.index] += 1;
+        if num_result_rows == max_batch_rows
+            || pos[c.index] == sort_keys[c.index][0].len()
+        {
+            break;
+        }
+        assert!(
+            lexcmp_array_rows(
+                sort_keys[c.index].iter().map(|a| *a),
+                pos[c.index] - 1,
+                pos[c.index]
+            ) <= Ordering::Equal,
+            "unsorted data in merge. row {}. data: {:?}",
+            pos[c.index],
+            sort_keys[c.index]
                 .iter()
-                .map(|c| -> ArrowResult<ArrayRef> {
-                    Ok(batch.column(batch.schema().index_of(c)?).clone())
-                })
-                .collect::<ArrowResult<Vec<_>>>()
-        })
-        .collect::<ArrowResult<Vec<_>>>()?;
-    let indices = merge_sort_indices(
-        arrays
+                .map(|a| a.slice(pos[c.index] - 1, 2))
+        );
+        let k = Key {
+            values: &sort_keys[c.index],
+            index: c.index,
+            row: pos[c.index],
+        };
+        candidates.push(Reverse(k));
+    }
+
+    let result_cols: Vec<ArrayRef> = result_cols
+        .into_iter()
+        .map(|r| make_array(r.freeze()))
+        .collect();
+    #[cfg(debug_assertions)]
+    {
+        let s = batches[0].1.schema();
+        let key_cols = columns
             .iter()
-            .map(|cols| cols.as_slice())
-            .collect::<Vec<_>>(),
-        cursors,
-        lasts,
-    )?;
-    let columns_to_coalesce = batches
-        .iter()
-        .zip(indices.iter())
-        .map(|((_, batch), (_, i))| -> ArrowResult<Vec<ArrayRef>> {
-            batch
-                .columns()
-                .iter()
-                .map(|c| take(c.as_ref(), i, None))
-                .collect::<ArrowResult<Vec<_>>>()
-        })
-        .collect::<ArrowResult<Vec<_>>>()?;
-    let new_batch = RecordBatch::try_new(
-        batches[0].1.schema(),
-        (0..batches[0].1.columns().len())
-            .map(|column_index| {
-                let mut column_arrays = columns_to_coalesce
-                    .iter()
-                    .map(|batch_columns| batch_columns[column_index].clone());
-                let first = Ok(column_arrays.next().unwrap());
-                column_arrays.fold(first, |res, b| {
-                    res.and_then(|a| -> ArrowResult<ArrayRef> {
-                        Ok(if_then_else(
-                            &is_not_null(a.as_ref())?,
-                            a.clone(),
-                            b,
-                            a.data_type(),
-                        )
-                        .map_err(|e| ArrowError::ComputeError(e.to_string()))?)
-                    })
-                })
-            })
-            .collect::<ArrowResult<Vec<_>>>()?,
-    )?;
-    assert_eq!(
-        new_batch.num_rows(),
-        batches
-            .iter()
-            .zip(indices.iter())
-            .map(|((offset, _), (new_offset, _))| new_offset - offset)
-            .sum::<usize>()
-    );
-    Ok((indices.iter().map(|(i, _)| *i).collect(), new_batch))
+            .map(|c| &result_cols[s.index_of(c).unwrap()])
+            .collect::<Vec<_>>();
+        for i in 1..result_cols[0].len() {
+            debug_assert!(
+                lexcmp_array_rows(key_cols.iter().map(|a| *a), i - 1, i,)
+                    <= Ordering::Equal,
+                "unsorted data after merge. row {}. data: {:?}",
+                i - 1,
+                key_cols.iter().map(|a| a.slice(i - 1, 2))
+            );
+        }
+    }
+    Ok((
+        pos,
+        RecordBatch::try_new(batches[0].1.schema(), result_cols)?,
+    ))
+}
+
+fn lexcmp_array_rows<'a>(
+    cols: impl Iterator<Item = &'a ArrayRef>,
+    l_row: usize,
+    r_row: usize,
+) -> Ordering {
+    for c in cols {
+        let o = cmp_array_row_same_types(c, l_row, c, r_row);
+        if o != Ordering::Equal {
+            return o;
+        }
+    }
+    Ordering::Equal
 }
 
 impl RecordBatchStream for MergeSortStream {
@@ -468,6 +555,7 @@ impl RecordBatchStream for MergeSortStream {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::arrow::compute::kernels::concat::concat;
     use crate::physical_plan::collect;
     use crate::physical_plan::memory::MemoryExec;
     use arrow::array::*;
@@ -559,13 +647,13 @@ mod tests {
                 (Some("3".to_owned()), Some("2".to_owned())),
                 (Some("5".to_owned()), None),
                 (Some("5".to_owned()), Some("2".to_owned())),
-                (Some("5".to_owned()), Some("2".to_owned())),
             ],
             transform_batch_for_assert(&result[0])
         );
 
         assert_eq!(
             vec![
+                (Some("5".to_owned()), Some("2".to_owned())),
                 (Some("7".to_owned()), Some("1".to_owned())),
                 (Some("8".to_owned()), Some("2".to_owned())),
                 (Some("8".to_owned()), Some("2".to_owned())),
@@ -668,13 +756,13 @@ mod tests {
                 (Some("3".to_owned()), Some("2".to_owned())),
                 (Some("5".to_owned()), None),
                 (Some("5".to_owned()), Some("2".to_owned())),
-                (Some("5".to_owned()), Some("2".to_owned())),
             ],
             transform_batch_for_assert(&result[0])
         );
 
         assert_eq!(
             vec![
+                (Some("5".to_owned()), Some("2".to_owned())),
                 (Some("7".to_owned()), Some("1".to_owned())),
                 (Some("8".to_owned()), Some("2".to_owned())),
                 (Some("8".to_owned()), Some("2".to_owned())),
@@ -854,5 +942,166 @@ mod tests {
             })
             .collect();
         result
+    }
+
+    #[test]
+    fn test_merge_sort() {
+        let array_1: ArrayRef = Arc::new(UInt64Array::from(vec![1, 2, 2, 3, 5, 10, 20]));
+        let array_2: ArrayRef = Arc::new(UInt64Array::from(vec![4, 8, 9, 15]));
+        let array_3: ArrayRef = Arc::new(UInt64Array::from(vec![4, 7, 9, 15]));
+        let arrays = vec![&array_1, &array_2, &array_3];
+        let res = test_merge(arrays);
+
+        assert_eq!(
+            res.as_any().downcast_ref::<UInt64Array>().unwrap(),
+            &UInt64Array::from(vec![1, 2, 2, 3, 4, 4, 5, 7, 8, 9, 9, 10, 15, 15, 20])
+        )
+    }
+
+    #[test]
+    fn merge_sort_with_nulls() {
+        let array_1: ArrayRef = Arc::new(UInt64Array::from(vec![
+            None,
+            None,
+            Some(1),
+            Some(2),
+            Some(2),
+            Some(3),
+            Some(5),
+            Some(10),
+            Some(20),
+        ]));
+        let array_2: ArrayRef = Arc::new(UInt64Array::from(vec![
+            None,
+            None,
+            None,
+            None,
+            Some(4),
+            Some(8),
+            Some(9),
+            Some(15),
+        ]));
+        let array_3: ArrayRef = Arc::new(UInt64Array::from(vec![
+            None,
+            Some(4),
+            Some(7),
+            Some(9),
+            Some(15),
+        ]));
+        let arrays = vec![&array_1, &array_2, &array_3];
+        let res = test_merge(arrays);
+
+        assert_eq!(
+            res.as_any().downcast_ref::<UInt64Array>().unwrap(),
+            &UInt64Array::from(vec![
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(1),
+                Some(2),
+                Some(2),
+                Some(3),
+                Some(4),
+                Some(4),
+                Some(5),
+                Some(7),
+                Some(8),
+                Some(9),
+                Some(9),
+                Some(10),
+                Some(15),
+                Some(15),
+                Some(20)
+            ])
+        )
+    }
+
+    #[test]
+    fn single_array() {
+        let array_1: ArrayRef = Arc::new(UInt64Array::from(vec![1, 2, 2, 3, 5, 10, 20]));
+        let arrays = vec![&array_1];
+        let res = test_merge(arrays);
+
+        assert_eq!(
+            res.as_any().downcast_ref::<UInt64Array>().unwrap(),
+            &UInt64Array::from(vec![1, 2, 2, 3, 5, 10, 20])
+        )
+    }
+
+    #[test]
+    fn empty_array() {
+        let array_1: ArrayRef = Arc::new(UInt64Array::from(vec![1, 2, 2, 3, 5, 10, 20]));
+        let array_2: ArrayRef = Arc::new(UInt64Array::from(Vec::<u64>::new()));
+        let arrays = vec![&array_1, &array_2];
+        let res = test_merge(arrays);
+
+        assert_eq!(
+            res.as_any().downcast_ref::<UInt64Array>().unwrap(),
+            &UInt64Array::from(vec![1, 2, 2, 3, 5, 10, 20])
+        )
+    }
+
+    #[test]
+    fn two_empty_arrays() {
+        let array_1: ArrayRef = Arc::new(UInt64Array::from(Vec::<u64>::new()));
+        let array_2: ArrayRef = Arc::new(UInt64Array::from(Vec::<u64>::new()));
+        let arrays = vec![&array_1, &array_2];
+        let res = test_merge(arrays);
+
+        assert_eq!(
+            res.as_any().downcast_ref::<UInt64Array>().unwrap(),
+            &UInt64Array::from(Vec::<u64>::new())
+        )
+    }
+
+    fn test_merge(arrays: Vec<&ArrayRef>) -> ArrayRef {
+        let schema = Arc::new(Schema::new(vec![Field::new(
+            "a",
+            arrays[0].data_type().clone(),
+            true,
+        )]));
+
+        let mut arrays = arrays.into_iter().map(|a| a.clone()).collect_vec();
+        let mut results = Vec::new();
+        // Make sure we consume all batches.
+        while !arrays.is_empty() {
+            let mut batches = Vec::with_capacity(arrays.len());
+            for a in &arrays {
+                if a.is_empty() {
+                    batches.push(RecordBatch::new_empty(schema.clone()));
+                } else {
+                    batches.push(
+                        RecordBatch::try_new(schema.clone(), vec![a.clone()]).unwrap(),
+                    );
+                };
+            }
+
+            let (indices, b) = merge_sort(
+                &batches.iter().map(|b| (0, b)).collect_vec(),
+                &schema
+                    .fields()
+                    .iter()
+                    .map(|f| f.name().clone())
+                    .collect_vec(),
+                128, // increase this if you want larger batches in tests.
+            )
+            .unwrap();
+            results.push(b.column(0).clone());
+            for i in (0..arrays.len()).rev() {
+                // reverse order for remove.
+                if arrays[i].len() == indices[i] {
+                    arrays.remove(i);
+                    continue;
+                }
+                let a = &mut arrays[i];
+                *a = a.slice(indices[i], a.len() - indices[i]);
+            }
+        }
+
+        concat(&results.iter().map(|a| a.as_ref()).collect_vec()).unwrap()
     }
 }

@@ -25,8 +25,7 @@ use crate::error::{ArrowError, Result};
 
 use crate::compute::{total_cmp_32, total_cmp_64};
 use core::fmt;
-use std::cmp::{Ordering, Reverse};
-use std::collections::BinaryHeap;
+use std::cmp::Ordering;
 use std::fmt::{Debug, Display, Formatter};
 
 type JoinCursorAndIndices = (usize, bool, Arc<UInt32Array>);
@@ -167,86 +166,6 @@ pub fn merge_join_indices<'a>(
             Arc::new(right_indices_array),
         ),
     ))
-}
-
-pub fn merge_sort_indices(
-    arrays: Vec<&[ArrayRef]>,
-    cursors: Vec<usize>,
-    last_array: Vec<bool>,
-) -> Result<Vec<CursorAndIndices>> {
-    let arrays_count = cursors.len();
-
-    if arrays_count != cursors.len() {
-        return Err(ArrowError::InvalidArgumentError(format!(
-            "Arrays doesn't match cursors len: {} != {}",
-            arrays_count,
-            cursors.len()
-        )));
-    }
-
-    let comparators = comparators_for(arrays)?;
-
-    let mut indices = Vec::new();
-
-    for _ in 0..cursors.len() {
-        indices.push(Vec::<Option<u32>>::new());
-    }
-
-    let (merge_cursors, mut finished_cursors) = cursors
-        .into_iter()
-        .enumerate()
-        .map(|(array_index, row_index)| {
-            MergeRowCursor::new(&comparators, array_index, row_index)
-        })
-        .partition::<Vec<_>, _>(|c| c.within_range());
-
-    let mut merge_cursors = merge_cursors
-        .into_iter()
-        .map(Reverse)
-        .collect::<BinaryHeap<Reverse<MergeRowCursor>>>();
-
-    while merge_cursors.iter().all(|Reverse(c)| c.within_range())
-        && !merge_cursors.is_empty()
-    {
-        if let Some(Reverse(current)) = merge_cursors.pop() {
-            current.check_consistency()?;
-            for (array_index, indices_array) in indices.iter_mut().enumerate() {
-                indices_array.push(if current.array_index == array_index {
-                    Some(current.row_index as u32)
-                } else {
-                    None
-                })
-            }
-            let next = current.next();
-            let within_range = next.within_range();
-            if within_range {
-                merge_cursors.push(Reverse(next));
-            } else {
-                let array_index = next.array_index;
-                finished_cursors.push(next);
-                if !last_array[array_index] {
-                    break;
-                }
-            }
-        }
-    }
-
-    let mut merge_cursors_vec = merge_cursors
-        .into_iter()
-        .map(|Reverse(c)| c)
-        .collect::<Vec<_>>();
-
-    merge_cursors_vec.append(&mut finished_cursors);
-
-    merge_cursors_vec.sort_by_key(|c| c.array_index);
-
-    Ok(merge_cursors_vec
-        .into_iter()
-        .zip(indices.into_iter())
-        .map(|(c, indices_array)| {
-            (c.row_index, Arc::new(UInt32Array::from(indices_array)))
-        })
-        .collect())
 }
 
 fn comparators_for<'a>(
@@ -729,94 +648,10 @@ where
 mod tests {
     use crate::array::{ArrayRef, UInt32Array, UInt64Array};
     use crate::compute::kernels::if_op::if_primitive;
-    use crate::compute::kernels::merge::{
-        merge_join_indices, merge_sort_indices, MergeJoinType,
-    };
+    use crate::compute::kernels::merge::{merge_join_indices, MergeJoinType};
     use crate::compute::{is_not_null, take};
     use crate::error::ArrowError;
     use std::sync::Arc;
-
-    #[test]
-    fn merge_sort() {
-        let array_1: ArrayRef = Arc::new(UInt64Array::from(vec![1, 2, 2, 3, 5, 10, 20]));
-        let array_2: ArrayRef = Arc::new(UInt64Array::from(vec![4, 8, 9, 15]));
-        let array_3: ArrayRef = Arc::new(UInt64Array::from(vec![4, 7, 9, 15]));
-        let vec1 = vec![array_1];
-        let vec2 = vec![array_2];
-        let vec3 = vec![array_3];
-        let arrays = vec![vec1.as_slice(), vec2.as_slice(), vec3.as_slice()];
-        let res = test_merge(arrays);
-
-        assert_eq!(
-            res.as_any().downcast_ref::<UInt64Array>().unwrap(),
-            &UInt64Array::from(vec![1, 2, 2, 3, 4, 4, 5, 7, 8, 9, 9, 10, 15, 15, 20])
-        )
-    }
-
-    #[test]
-    fn merge_sort_with_nulls() {
-        let array_1: ArrayRef = Arc::new(UInt64Array::from(vec![
-            None,
-            None,
-            Some(1),
-            Some(2),
-            Some(2),
-            Some(3),
-            Some(5),
-            Some(10),
-            Some(20),
-        ]));
-        let array_2: ArrayRef = Arc::new(UInt64Array::from(vec![
-            None,
-            None,
-            None,
-            None,
-            Some(4),
-            Some(8),
-            Some(9),
-            Some(15),
-        ]));
-        let array_3: ArrayRef = Arc::new(UInt64Array::from(vec![
-            None,
-            Some(4),
-            Some(7),
-            Some(9),
-            Some(15),
-        ]));
-        let vec1 = vec![array_1];
-        let vec2 = vec![array_2];
-        let vec3 = vec![array_3];
-        let arrays = vec![vec1.as_slice(), vec2.as_slice(), vec3.as_slice()];
-        let res = test_merge(arrays);
-
-        assert_eq!(
-            res.as_any().downcast_ref::<UInt64Array>().unwrap(),
-            &UInt64Array::from(vec![
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                Some(1),
-                Some(2),
-                Some(2),
-                Some(3),
-                Some(4),
-                Some(4),
-                Some(5),
-                Some(7),
-                Some(8),
-                Some(9),
-                Some(9),
-                Some(10),
-                Some(15),
-                Some(15),
-                Some(20)
-            ])
-        )
-    }
 
     #[test]
     fn merge_join() {
@@ -1021,77 +856,5 @@ mod tests {
                 )
             )
         )
-    }
-
-    #[test]
-    fn single_array() {
-        let array_1: ArrayRef = Arc::new(UInt64Array::from(vec![1, 2, 2, 3, 5, 10, 20]));
-        let vec1 = vec![array_1];
-        let arrays = vec![vec1.as_slice()];
-        let res = test_merge(arrays);
-
-        assert_eq!(
-            res.as_any().downcast_ref::<UInt64Array>().unwrap(),
-            &UInt64Array::from(vec![1, 2, 2, 3, 5, 10, 20])
-        )
-    }
-
-    #[test]
-    fn empty_array() {
-        let array_1: ArrayRef = Arc::new(UInt64Array::from(vec![1, 2, 2, 3, 5, 10, 20]));
-        let array_2: ArrayRef = Arc::new(UInt64Array::from(Vec::<u64>::new()));
-        let vec1 = vec![array_1];
-        let vec2 = vec![array_2];
-        let arrays = vec![vec1.as_slice(), vec2.as_slice()];
-        let res = test_merge(arrays);
-
-        assert_eq!(
-            res.as_any().downcast_ref::<UInt64Array>().unwrap(),
-            &UInt64Array::from(vec![1, 2, 2, 3, 5, 10, 20])
-        )
-    }
-
-    #[test]
-    fn two_empty_arrays() {
-        let array_1: ArrayRef = Arc::new(UInt64Array::from(Vec::<u64>::new()));
-        let array_2: ArrayRef = Arc::new(UInt64Array::from(Vec::<u64>::new()));
-        let vec1 = vec![array_1];
-        let vec2 = vec![array_2];
-        let arrays = vec![vec1.as_slice(), vec2.as_slice()];
-        let res = test_merge(arrays);
-
-        assert_eq!(
-            res.as_any().downcast_ref::<UInt64Array>().unwrap(),
-            &UInt64Array::from(Vec::<u64>::new())
-        )
-    }
-
-    fn test_merge(arrays: Vec<&[ArrayRef]>) -> ArrayRef {
-        let result = merge_sort_indices(
-            arrays.clone(),
-            (0..arrays.len()).map(|_| 0).collect(),
-            (0..arrays.len()).map(|_| true).collect(),
-        )
-        .unwrap();
-
-        let mut array_values = result
-            .iter()
-            .enumerate()
-            .map(|(i, (_, a))| take(arrays[i][0].as_ref(), a, None))
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap()
-            .into_iter();
-        let first = Ok(array_values.next().unwrap());
-        array_values
-            .fold(first, |res, b| {
-                res.and_then(|a| -> Result<ArrayRef, ArrowError> {
-                    Ok(Arc::new(if_primitive(
-                        &is_not_null(a.as_any().downcast_ref::<UInt64Array>().unwrap())?,
-                        a.as_any().downcast_ref::<UInt64Array>().unwrap(),
-                        b.as_any().downcast_ref::<UInt64Array>().unwrap(),
-                    )?))
-                })
-            })
-            .unwrap()
     }
 }
