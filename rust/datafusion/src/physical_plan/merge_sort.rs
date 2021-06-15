@@ -22,7 +22,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
-use futures::stream::Stream;
+use futures::stream::{Fuse, Stream};
 use futures::StreamExt;
 
 pub use arrow::compute::SortOptions;
@@ -280,14 +280,14 @@ impl MergeSortStream {
 }
 
 struct MergeSortStreamState {
-    stream: SendableRecordBatchStream,
+    stream: Fuse<SendableRecordBatchStream>,
     poll_state: Poll<Option<ArrowResult<(usize, RecordBatch)>>>,
 }
 
 impl MergeSortStreamState {
     fn new(stream: SendableRecordBatchStream) -> Self {
         Self {
-            stream,
+            stream: stream.fuse(),
             poll_state: Poll::Pending,
         }
     }
@@ -346,9 +346,17 @@ impl Stream for MergeSortStream {
             let res = self
                 .poll_states
                 .iter_mut()
-                .filter_map(|s| s.take_batch())
+                .map(|s| s.take_batch().transpose())
                 .collect::<ArrowResult<Vec<_>>>()
-                .and_then(|batches| -> ArrowResult<Option<RecordBatch>> {
+                .and_then(|all_batches| -> ArrowResult<Option<RecordBatch>> {
+                    let mut batches = Vec::with_capacity(all_batches.len());
+                    let mut batch_indices = Vec::with_capacity(all_batches.len());
+                    for (i, b) in all_batches.into_iter().enumerate() {
+                        if let Some(b) = b {
+                            batch_indices.push(i);
+                            batches.push(b);
+                        }
+                    }
                     if batches.is_empty() {
                         return Ok(None);
                     }
@@ -357,13 +365,10 @@ impl Stream for MergeSortStream {
                         self.columns.clone(),
                     )?;
 
-                    for ((state, new_cursor), (_, batch)) in self
-                        .poll_states
-                        .iter_mut()
-                        .zip(new_cursors.into_iter())
-                        .zip(batches.into_iter())
-                    {
-                        state.update_batch(new_cursor, batch);
+                    assert_eq!(new_cursors.len(), batches.len());
+                    for (i, b) in batches.into_iter().enumerate() {
+                        self.poll_states[batch_indices[i]]
+                            .update_batch(new_cursors[i], b.1);
                     }
 
                     Ok(Some(sorted_batch))
@@ -761,6 +766,42 @@ mod tests {
         );
 
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn multiple_inputs_order() {
+        let schema = Arc::new(Schema::new(vec![Field::new("a", DataType::Int64, true)]));
+        let ints = |d: Vec<i64>| -> RecordBatch {
+            RecordBatch::try_new(schema.clone(), vec![Arc::new(Int64Array::from(d))])
+                .unwrap()
+        };
+        let to_ints = |rs: Vec<RecordBatch>| -> Vec<Vec<i64>> {
+            rs.into_iter()
+                .map(|r| {
+                    r.columns()[0]
+                        .as_any()
+                        .downcast_ref::<Int64Array>()
+                        .unwrap()
+                        .values()
+                        .to_vec()
+                })
+                .collect()
+        };
+
+        let p1 = vec![ints(vec![1, 3])];
+        let p2 = vec![ints(vec![2, 4, 6]), ints(vec![8, 9])];
+        let p3 = vec![ints(vec![5, 7, 10])];
+
+        let inp = Arc::new(MemoryExec::try_new(&vec![p1, p2, p3], schema, None).unwrap());
+        let r = collect(Arc::new(
+            MergeSortExec::try_new(inp, vec!["a".to_string()]).unwrap(),
+        ))
+        .await
+        .unwrap();
+        assert_eq!(
+            to_ints(r),
+            vec![vec![1, 2, 3], vec![4, 5, 6], vec![7, 8, 9], vec![10]]
+        )
     }
 
     fn transform_batch_for_assert(
