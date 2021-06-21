@@ -388,7 +388,8 @@ impl<T: DataType> Encoder<T> for DictEncoder<T> {
 // ----------------------------------------------------------------------
 // RLE encoding
 
-const DEFAULT_RLE_BUFFER_LEN: usize = 1024;
+// Note: increased in CubeStore to hold 16384 bools.
+const DEFAULT_RLE_BUFFER_LEN: usize = 4096;
 
 /// RLE/Bit-Packing hybrid encoding for values.
 /// Currently is used only for data pages v2 and supports boolean types.
