@@ -293,13 +293,22 @@ impl MergeSortStreamState {
     }
 
     pub fn update_state(&mut self, cx: &mut std::task::Context<'_>) {
-        if let Poll::Pending = self.poll_state {
-            self.poll_state =
-                self.stream.poll_next_unpin(cx).map(|option| match option {
-                    Some(batch) => Some(batch.map(|b| (0, b))),
-                    None => None,
-                });
+        if !self.poll_state.is_pending() {
+            return;
         }
+        let inner = self.stream.poll_next_unpin(cx);
+        match inner {
+            // skip empty batches and wait for the next poll.
+            Poll::Ready(Some(Ok(b))) if b.num_rows() == 0 => {
+                cx.waker().wake_by_ref();
+                return;
+            }
+            _ => {}
+        }
+        self.poll_state = inner.map(|option| match option {
+            Some(batch) => Some(batch.map(|b| (0, b))),
+            None => None,
+        });
     }
 
     pub fn take_batch(&mut self) -> Option<ArrowResult<(usize, RecordBatch)>> {
@@ -463,6 +472,7 @@ mod tests {
     use crate::physical_plan::memory::MemoryExec;
     use arrow::array::*;
     use arrow::datatypes::*;
+    use itertools::Itertools;
 
     #[tokio::test]
     async fn two_inputs_three_batches() -> Result<()> {
@@ -742,20 +752,9 @@ mod tests {
         assert_eq!(DataType::UInt64, *sort_exec.schema().field(1).data_type());
 
         let result: Vec<RecordBatch> = collect(sort_exec).await?;
-        assert_eq!(result.len(), 3);
-
+        assert_eq!(result.len(), 1);
         assert_eq!(
             transform_batch_for_assert(&result[0]),
-            Vec::<(Option<String>, Option<String>)>::new(),
-        );
-
-        assert_eq!(
-            transform_batch_for_assert(&result[1]),
-            Vec::<(Option<String>, Option<String>)>::new(),
-        );
-
-        assert_eq!(
-            transform_batch_for_assert(&result[2]),
             vec![
                 (Some("7".to_owned()), Some("1".to_owned())),
                 (Some("8".to_owned()), Some("2".to_owned())),
@@ -768,31 +767,36 @@ mod tests {
         Ok(())
     }
 
+    fn ints_schema() -> SchemaRef {
+        Arc::new(Schema::new(vec![Field::new("a", DataType::Int64, true)]))
+    }
+
+    fn ints(d: Vec<i64>) -> RecordBatch {
+        RecordBatch::try_new(ints_schema(), vec![Arc::new(Int64Array::from(d))]).unwrap()
+    }
+
+    fn to_ints(rs: Vec<RecordBatch>) -> Vec<Vec<i64>> {
+        rs.into_iter()
+            .map(|r| {
+                r.columns()[0]
+                    .as_any()
+                    .downcast_ref::<Int64Array>()
+                    .unwrap()
+                    .values()
+                    .to_vec()
+            })
+            .collect()
+    }
+
     #[tokio::test]
     async fn multiple_inputs_order() {
-        let schema = Arc::new(Schema::new(vec![Field::new("a", DataType::Int64, true)]));
-        let ints = |d: Vec<i64>| -> RecordBatch {
-            RecordBatch::try_new(schema.clone(), vec![Arc::new(Int64Array::from(d))])
-                .unwrap()
-        };
-        let to_ints = |rs: Vec<RecordBatch>| -> Vec<Vec<i64>> {
-            rs.into_iter()
-                .map(|r| {
-                    r.columns()[0]
-                        .as_any()
-                        .downcast_ref::<Int64Array>()
-                        .unwrap()
-                        .values()
-                        .to_vec()
-                })
-                .collect()
-        };
-
         let p1 = vec![ints(vec![1, 3])];
         let p2 = vec![ints(vec![2, 4, 6]), ints(vec![8, 9])];
         let p3 = vec![ints(vec![5, 7, 10])];
 
-        let inp = Arc::new(MemoryExec::try_new(&vec![p1, p2, p3], schema, None).unwrap());
+        let inp = Arc::new(
+            MemoryExec::try_new(&vec![p1, p2, p3], ints_schema(), None).unwrap(),
+        );
         let r = collect(Arc::new(
             MergeSortExec::try_new(inp, vec!["a".to_string()]).unwrap(),
         ))
@@ -801,7 +805,25 @@ mod tests {
         assert_eq!(
             to_ints(r),
             vec![vec![1, 2, 3], vec![4, 5, 6], vec![7, 8, 9], vec![10]]
-        )
+        );
+    }
+
+    #[tokio::test]
+    async fn empty_batches_2() {
+        let p1 = vec![ints(vec![1, 2])];
+        let p2 = vec![ints(vec![]), ints(vec![0])];
+
+        let inp =
+            Arc::new(MemoryExec::try_new(&vec![p1, p2], ints_schema(), None).unwrap());
+        let r = collect(Arc::new(
+            MergeSortExec::try_new(inp, vec!["a".to_string()]).unwrap(),
+        ))
+        .await
+        .unwrap();
+        assert_eq!(
+            to_ints(r).into_iter().flatten().collect_vec(),
+            vec![0, 1, 2],
+        );
     }
 
     fn transform_batch_for_assert(
