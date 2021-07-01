@@ -38,7 +38,7 @@ impl<S> StreamWithSchema<S> {
 
 impl<S> StreamWithSchema<S>
 where
-    S: Stream<Item = Result<RecordBatch>> + Send + Sync,
+    S: Stream<Item = Result<RecordBatch>> + Send,
 {
     pub fn wrap(schema: SchemaRef, stream: S) -> Self {
         StreamWithSchema { stream, schema }
@@ -47,7 +47,7 @@ where
 
 impl<S> Stream for StreamWithSchema<S>
 where
-    S: Stream<Item = Result<RecordBatch>> + Send + Sync,
+    S: Stream<Item = Result<RecordBatch>> + Send,
 {
     type Item = S::Item;
 
@@ -62,7 +62,7 @@ where
 
 impl<S> RecordBatchStream for StreamWithSchema<S>
 where
-    S: Stream<Item = Result<RecordBatch>> + Send + Sync,
+    S: Stream<Item = Result<RecordBatch>> + Send,
 {
     fn schema(&self) -> SchemaRef {
         self.schema.clone()

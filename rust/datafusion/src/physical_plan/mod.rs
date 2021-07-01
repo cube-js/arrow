@@ -46,7 +46,7 @@ pub trait RecordBatchStream: Stream<Item = ArrowResult<RecordBatch>> {
 }
 
 /// Trait for a stream of record batches.
-pub type SendableRecordBatchStream = Pin<Box<dyn RecordBatchStream + Send + Sync>>;
+pub type SendableRecordBatchStream = Pin<Box<dyn RecordBatchStream + Send>>;
 
 /// SQL metric type
 #[derive(Debug, Clone)]
