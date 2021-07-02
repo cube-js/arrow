@@ -16,8 +16,8 @@
 
 use crate::datasource::datasource::TableProviderFilterPushDown;
 use crate::error::DataFusionError;
-use crate::logical_plan::{and, JoinType, LogicalPlan};
-use crate::logical_plan::{DFSchema, Expr};
+use crate::logical_plan::{and, JoinType, LogicalPlan, DFSchema, Expr};
+use crate::execution::context::ExecutionProps;
 use crate::optimizer::optimizer::OptimizerRule;
 use crate::optimizer::utils;
 use crate::physical_plan::expressions::Column;
@@ -544,7 +544,7 @@ impl OptimizerRule for FilterPushDown {
         "filter_push_down"
     }
 
-    fn optimize(&self, plan: &LogicalPlan) -> Result<LogicalPlan> {
+    fn optimize(&self, plan: &LogicalPlan, _: &ExecutionProps) -> Result<LogicalPlan> {
         optimize(plan, State::default())
     }
 }
@@ -589,7 +589,9 @@ mod tests {
 
     fn assert_optimized_plan_eq(plan: &LogicalPlan, expected: &str) {
         let rule = FilterPushDown::new();
-        let optimized_plan = rule.optimize(plan).expect("failed to optimize plan");
+        let optimized_plan = rule
+            .optimize(plan, &ExecutionProps::new())
+            .expect("failed to optimize plan");
         let formatted_plan = format!("{:?}", optimized_plan);
         assert_eq!(formatted_plan, expected);
     }

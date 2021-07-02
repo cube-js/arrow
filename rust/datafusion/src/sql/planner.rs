@@ -1637,6 +1637,7 @@ pub fn convert_data_type(sql: &SQLDataType) -> Result<DataType> {
 mod tests {
     use super::*;
     use crate::datasource::empty::EmptyTable;
+    use crate::execution::context::ExecutionProps;
     use crate::optimizer::optimizer::OptimizerRule;
     use crate::optimizer::projection_push_down::ProjectionPushDown;
     use crate::{logical_plan::create_udf, sql::parser::DFParser};
@@ -2832,7 +2833,7 @@ mod tests {
 
     fn optimize(plan: &LogicalPlan) -> Result<LogicalPlan> {
         let rule = ProjectionPushDown::new();
-        rule.optimize(plan)
+        rule.optimize(plan, &ExecutionProps::new())
     }
 
     fn logical_plan(sql: &str) -> Result<LogicalPlan> {

@@ -34,6 +34,7 @@ use super::{
     ColumnarValue, PhysicalExpr,
 };
 use crate::logical_plan::DFSchema;
+use crate::execution::context::ExecutionContextState;
 use crate::physical_plan::array_expressions;
 use crate::physical_plan::datetime_expressions;
 use crate::physical_plan::expressions::{nullif_func, SUPPORTED_NULLIF_TYPES};
@@ -196,6 +197,8 @@ pub enum BuiltinScalarFunction {
     ToHex,
     /// to_timestamp
     ToTimestamp,
+    ///now
+    Now,
     /// translate
     Translate,
     /// trim
@@ -275,6 +278,7 @@ impl FromStr for BuiltinScalarFunction {
             "substr" => BuiltinScalarFunction::Substr,
             "to_hex" => BuiltinScalarFunction::ToHex,
             "to_timestamp" => BuiltinScalarFunction::ToTimestamp,
+            "now" => BuiltinScalarFunction::Now,
             "translate" => BuiltinScalarFunction::Translate,
             "trim" => BuiltinScalarFunction::Trim,
             "upper" => BuiltinScalarFunction::Upper,
@@ -299,15 +303,6 @@ pub fn return_type(
 
     // verify that this is a valid set of data types for this function
     data_types(&arg_types, &signature(fun))?;
-
-    if arg_types.is_empty() {
-        // functions currently cannot be evaluated without arguments, as they can't
-        // know the number of rows to return.
-        return Err(DataFusionError::Plan(format!(
-            "Function '{}' requires at least one argument",
-            fun
-        )));
-    }
 
     // the return type of the built in function.
     // Some built-in functions' return type depends on the incoming type.
@@ -587,6 +582,7 @@ pub fn return_type(
         BuiltinScalarFunction::ToTimestamp => {
             Ok(DataType::Timestamp(TimeUnit::Nanosecond, None))
         }
+        BuiltinScalarFunction::Now => Ok(DataType::Timestamp(TimeUnit::Nanosecond, None)),
         BuiltinScalarFunction::Translate => Ok(match arg_types[0] {
             DataType::LargeUtf8 => DataType::LargeUtf8,
             DataType::Utf8 => DataType::Utf8,
@@ -718,6 +714,7 @@ pub fn create_physical_expr(
     fun: &BuiltinScalarFunction,
     args: &[Arc<dyn PhysicalExpr>],
     input_schema: &DFSchema,
+    ctx_state: &ExecutionContextState,
 ) -> Result<Arc<dyn PhysicalExpr>> {
     let fun_expr: ScalarFunctionImplementation = Arc::new(match fun {
         // math functions
@@ -811,6 +808,22 @@ pub fn create_physical_expr(
         }
         BuiltinScalarFunction::DatePart => datetime_expressions::date_part,
         BuiltinScalarFunction::DateTrunc => datetime_expressions::date_trunc,
+        BuiltinScalarFunction::Now => {
+            // bind value for now at plan time
+            let fun_expr = Arc::new(datetime_expressions::make_now(
+                ctx_state.execution_props.query_execution_start_time,
+            ));
+
+            // TODO refactor code to not return here, but instead fall through below
+            let args = vec![];
+            let arg_types = vec![]; // has no args
+            return Ok(Arc::new(ScalarFunctionExpr::new(
+                &format!("{}", fun),
+                fun_expr,
+                args,
+                &return_type(&fun, &arg_types)?,
+            )));
+        }
         BuiltinScalarFunction::InitCap => |args| match args[0].data_type() {
             DataType::Utf8 => {
                 make_scalar_function(string_expressions::initcap::<i32>)(args)
@@ -1463,6 +1476,7 @@ mod tests {
         ($FUNC:ident, $ARGS:expr, $EXPECTED:expr, $EXPECTED_TYPE:ty, $DATA_TYPE: ident, $ARRAY_TYPE:ident) => {
             // used to provide type annotation
             let expected: Result<Option<$EXPECTED_TYPE>> = $EXPECTED;
+            let ctx_state = ExecutionContextState::new();
 
             // any type works here: we evaluate against a literal of `value`
             let schema = Schema::new(vec![Field::new("a", DataType::Int32, false)]);
@@ -1470,7 +1484,7 @@ mod tests {
             let columns: Vec<ArrayRef> = vec![Arc::new(Int32Array::from(vec![1]))];
 
             let expr =
-                create_physical_expr(&BuiltinScalarFunction::$FUNC, $ARGS, &dfschema)?;
+                create_physical_expr(&BuiltinScalarFunction::$FUNC, $ARGS, &dfschema, &ctx_state)?;
 
             // type is correct
             assert_eq!(expr.data_type(&dfschema)?, DataType::$DATA_TYPE);
@@ -3631,7 +3645,21 @@ mod tests {
 
     #[test]
     fn test_concat_error() -> Result<()> {
-        let result = return_type(&BuiltinScalarFunction::Concat, &[]);
+        let ctx_state = ExecutionContextState::new();
+        let schema = Schema::new(vec![Field::new("a", DataType::Int32, false)]);
+        let dfschema = schema.clone().to_dfschema().unwrap();
+
+        let expr = create_physical_expr(
+            &BuiltinScalarFunction::Concat,
+            &[],
+            &dfschema,
+            &ctx_state,
+        )?;
+
+        let columns: Vec<ArrayRef> = vec![Arc::new(Int32Array::from(vec![1]))];
+        let batch = RecordBatch::try_new(Arc::new(schema.clone()), columns)?;
+        let result = expr.evaluate(&batch);
+
         if result.is_ok() {
             Err(DataFusionError::Plan(
                 "Function 'concat' cannot accept zero arguments".to_string(),
@@ -3653,11 +3681,13 @@ mod tests {
             Field::new("b", value2.data_type().clone(), false),
         ]);
         let columns: Vec<ArrayRef> = vec![value1, value2];
+        let ctx_state = ExecutionContextState::new();
 
         let expr = create_physical_expr(
             &BuiltinScalarFunction::Array,
             &[col("a"), col("b")],
             &schema.clone().to_dfschema()?,
+            &ctx_state,
         )?;
 
         // type is correct
@@ -3724,6 +3754,7 @@ mod tests {
     fn test_regexp_match() -> Result<()> {
         let schema = Schema::new(vec![Field::new("a", DataType::Utf8, false)]);
         let dfschema = schema.clone().to_dfschema().unwrap();
+        let ctx_state = ExecutionContextState::new();
 
         // concat(value, value)
         let col_value: ArrayRef = Arc::new(StringArray::from(vec!["aaa-555"]));
@@ -3733,6 +3764,7 @@ mod tests {
             &BuiltinScalarFunction::RegexpMatch,
             &[col("a"), pattern],
             &dfschema,
+            &ctx_state,
         )?;
 
         // type is correct
@@ -3762,6 +3794,7 @@ mod tests {
     fn test_regexp_match_all_literals() -> Result<()> {
         let schema = Schema::new(vec![Field::new("a", DataType::Int32, false)]);
         let dfschema = schema.clone().to_dfschema().unwrap();
+        let ctx_state = ExecutionContextState::new();
 
         // concat(value, value)
         let col_value = lit(ScalarValue::Utf8(Some("aaa-555".to_string())));
@@ -3771,6 +3804,7 @@ mod tests {
             &BuiltinScalarFunction::RegexpMatch,
             &[col_value, pattern],
             &dfschema,
+            &ctx_state,
         )?;
 
         // type is correct
