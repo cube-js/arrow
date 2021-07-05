@@ -75,6 +75,7 @@ jobs:
           cargo build
       # Ballista is currently not part of the main workspace so requires a separate build step
       - name: Build Ballista
+        if: false # Disabled in CubeStore fork.
         run: |
           export CARGO_HOME="/github/home/.cargo"
           export CARGO_TARGET_DIR="/github/home/target"
@@ -143,6 +144,7 @@ jobs:
           cargo run --example read_csv_infer_schema
       # Ballista is currently not part of the main workspace so requires a separate test step
       - name: Run Ballista tests
+        if: false # Disabled in CubeStore fork.
         run: |
           export CARGO_HOME="/github/home/.cargo"
           export CARGO_TARGET_DIR="/github/home/target"
