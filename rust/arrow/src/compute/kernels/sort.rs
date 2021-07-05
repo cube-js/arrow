@@ -111,7 +111,7 @@ where
 // implements comparison using IEEE 754 total ordering for f32
 // Original implementation from https://doc.rust-lang.org/std/primitive.f64.html#method.total_cmp
 // TODO to change to use std when it becomes stable
-pub(crate) fn total_cmp_32(l: f32, r: f32) -> std::cmp::Ordering {
+pub fn total_cmp_32(l: f32, r: f32) -> std::cmp::Ordering {
     let mut left = l.to_bits() as i32;
     let mut right = r.to_bits() as i32;
 
@@ -124,7 +124,7 @@ pub(crate) fn total_cmp_32(l: f32, r: f32) -> std::cmp::Ordering {
 // implements comparison using IEEE 754 total ordering for f64
 // Original implementation from https://doc.rust-lang.org/std/primitive.f64.html#method.total_cmp
 // TODO to change to use std when it becomes stable
-pub(crate) fn total_cmp_64(l: f64, r: f64) -> std::cmp::Ordering {
+pub fn total_cmp_64(l: f64, r: f64) -> std::cmp::Ordering {
     let mut left = l.to_bits() as i64;
     let mut right = r.to_bits() as i64;
 

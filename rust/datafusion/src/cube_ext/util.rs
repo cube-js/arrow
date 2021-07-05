@@ -17,6 +17,7 @@
 
 use crate::scalar::ScalarValue;
 use arrow::array::ArrayRef;
+use arrow::compute::{total_cmp_32, total_cmp_64};
 use std::cmp::Ordering;
 
 /// Generic code to help implement generic operations on arrays.
@@ -195,8 +196,12 @@ pub fn cmp_same_types(
 
     let o = match (l, r) {
         (ScalarValue::Boolean(Some(l)), ScalarValue::Boolean(Some(r))) => l.cmp(r),
-        (ScalarValue::Float32(Some(l)), ScalarValue::Float32(Some(r))) => l.total_cmp(r),
-        (ScalarValue::Float64(Some(l)), ScalarValue::Float64(Some(r))) => l.total_cmp(r),
+        (ScalarValue::Float32(Some(l)), ScalarValue::Float32(Some(r))) => {
+            total_cmp_32(*l, *r)
+        }
+        (ScalarValue::Float64(Some(l)), ScalarValue::Float64(Some(r))) => {
+            total_cmp_64(*l, *r)
+        }
         (ScalarValue::Int8(Some(l)), ScalarValue::Int8(Some(r))) => l.cmp(r),
         (ScalarValue::Int16(Some(l)), ScalarValue::Int16(Some(r))) => l.cmp(r),
         (ScalarValue::Int32(Some(l)), ScalarValue::Int32(Some(r))) => l.cmp(r),
@@ -283,12 +288,12 @@ pub fn cmp_array_row_same_types(
         ($l: expr, Float32Array, $($rest: tt)*) => {{
             let l = $l.as_any().downcast_ref::<Float32Array>().unwrap();
             let r = r.as_any().downcast_ref::<Float32Array>().unwrap();
-            return l.value(l_row).total_cmp(&r.value(r_row));
+            return arrow::compute::total_cmp_32(l.value(l_row), r.value(r_row));
         }};
         ($l: expr, Float64Array, $($rest: tt)*) => {{
             let l = $l.as_any().downcast_ref::<Float64Array>().unwrap();
             let r = r.as_any().downcast_ref::<Float64Array>().unwrap();
-            return l.value(l_row).total_cmp(&r.value(r_row));
+            return arrow::compute::total_cmp_64(l.value(l_row), r.value(r_row));
         }};
         ($l: expr, $arr: ty, $($rest: tt)*) => {{
             let l = $l.as_any().downcast_ref::<$arr>().unwrap();
