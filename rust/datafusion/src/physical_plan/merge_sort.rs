@@ -473,36 +473,55 @@ fn merge_sort(
         ));
     }
     while let Some(Reverse(c)) = candidates.pop() {
-        for i in 0..num_cols {
-            result_cols[i].extend(c.index, c.row, c.row + 1);
+        let mut len = 1;
+        if let Some(next) = candidates.peek() {
+            loop {
+                if num_result_rows + len == max_batch_rows
+                    || c.row + len == sort_keys[c.index][0].len()
+                {
+                    break;
+                }
+                assert!(
+                    lexcmp_array_rows(
+                        sort_keys[c.index].iter().map(|a| *a),
+                        c.row + len - 1,
+                        c.row + len
+                    ) <= Ordering::Equal,
+                    "unsorted data in merge. row {}. data: {:?}",
+                    c.row + len,
+                    sort_keys[c.index]
+                        .iter()
+                        .map(|a| a.slice(pos[c.index] + len - 1, 2))
+                );
+                let k = Key {
+                    values: &sort_keys[c.index],
+                    index: c.index,
+                    row: c.row + len,
+                };
+                if k.cmp(&next.0) <= Ordering::Equal {
+                    len += 1;
+                } else {
+                    break;
+                }
+            }
         }
-        num_result_rows += 1;
+        for i in 0..num_cols {
+            result_cols[i].extend(c.index, c.row, c.row + len);
+        }
+        num_result_rows += len;
 
         assert_eq!(pos[c.index], c.row);
-        pos[c.index] += 1;
+        pos[c.index] += len;
         if num_result_rows == max_batch_rows
             || pos[c.index] == sort_keys[c.index][0].len()
         {
             break;
         }
-        assert!(
-            lexcmp_array_rows(
-                sort_keys[c.index].iter().map(|a| *a),
-                pos[c.index] - 1,
-                pos[c.index]
-            ) <= Ordering::Equal,
-            "unsorted data in merge. row {}. data: {:?}",
-            pos[c.index],
-            sort_keys[c.index]
-                .iter()
-                .map(|a| a.slice(pos[c.index] - 1, 2))
-        );
-        let k = Key {
+        candidates.push(Reverse(Key {
             values: &sort_keys[c.index],
             index: c.index,
             row: pos[c.index],
-        };
-        candidates.push(Reverse(k));
+        }));
     }
 
     let result_cols: Vec<ArrayRef> = result_cols
