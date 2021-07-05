@@ -33,6 +33,7 @@ use tokio_stream::wrappers::UnboundedReceiverStream;
 use super::{hash_join::create_hashes, RecordBatchStream, SendableRecordBatchStream};
 use async_trait::async_trait;
 
+use crate::cube_ext;
 use crate::logical_plan::DFSchemaRef;
 use futures::stream::Stream;
 use futures::StreamExt;
@@ -142,7 +143,7 @@ impl ExecutionPlan for RepartitionExec {
                     .map(|(partition, (tx, _rx))| (*partition, tx.clone()))
                     .collect();
                 let partitioning = self.partitioning.clone();
-                let _: JoinHandle<Result<()>> = tokio::spawn(async move {
+                let _: JoinHandle<Result<()>> = cube_ext::spawn(async move {
                     let mut stream = input.execute(i).await?;
                     let mut counter = 0;
                     let hashes_buf = &mut vec![];
@@ -435,7 +436,7 @@ mod tests {
     #[tokio::test]
     async fn many_to_many_round_robin_within_tokio_task() -> Result<()> {
         let join_handle: JoinHandle<Result<Vec<Vec<RecordBatch>>>> =
-            tokio::spawn(async move {
+            cube_ext::spawn(async move {
                 // define input partitions
                 let schema = test_schema();
                 let partition = create_vec_batches(&schema, 50);

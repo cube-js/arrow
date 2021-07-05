@@ -32,6 +32,7 @@ use super::{
 };
 use crate::{
     catalog::catalog::MemoryCatalogList,
+    cube_ext,
     physical_plan::{common, ExecutionPlan, Partitioning},
 };
 use crate::{
@@ -59,10 +60,7 @@ use parquet::file::{
 
 use fmt::Debug;
 use parquet::arrow::{ArrowReader, ParquetFileArrowReader};
-use tokio::{
-    sync::mpsc::{channel, Receiver, Sender},
-    task,
-};
+use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio_stream::wrappers::ReceiverStream;
 
 use crate::datasource::datasource::{ColumnStatistics, Statistics};
@@ -877,7 +875,7 @@ impl ExecutionPlan for ParquetExec {
         let batch_size = self.batch_size;
         let limit = self.limit;
 
-        task::spawn_blocking(move || {
+        cube_ext::spawn_blocking(move || {
             if let Err(e) = read_files(
                 &filenames,
                 &projection,

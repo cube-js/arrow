@@ -40,10 +40,10 @@ use crate::physical_plan::Partitioning;
 use crate::physical_plan::{ExecutionPlan, OptimizerHints};
 
 use super::SendableRecordBatchStream;
+use crate::cube_ext;
 use crate::logical_plan::DFSchemaRef;
 use pin_project_lite::pin_project;
 use std::option::Option::None;
-use tracing_futures::{Instrument, WithSubscriber};
 
 /// Merge execution plan executes partitions in parallel and combines them into a single
 /// partition. No guarantees are made about the order of the resulting partition.
@@ -145,7 +145,7 @@ impl ExecutionPlan for MergeExec {
                             sender.send(item).await.ok();
                         }
                     };
-                    tokio::spawn(task.in_current_span().with_current_subscriber());
+                    cube_ext::spawn(task);
                 }
 
                 Ok(Box::pin(MergeStream {

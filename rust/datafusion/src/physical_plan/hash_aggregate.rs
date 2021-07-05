@@ -77,6 +77,7 @@ use super::{
     SendableRecordBatchStream,
 };
 
+use crate::cube_ext;
 use crate::logical_plan::{DFSchema, DFSchemaRef};
 use crate::physical_plan::sorted_aggregate::SortedAggState;
 use crate::scalar::ScalarValue;
@@ -85,7 +86,6 @@ use itertools::Itertools;
 use smallvec::smallvec;
 use smallvec::SmallVec;
 use std::convert::TryFrom;
-use tracing_futures::{Instrument, WithSubscriber};
 
 /// Hash aggregate modes
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -765,7 +765,7 @@ impl GroupedHashAggregateStream {
             };
             tx.send(result)
         };
-        tokio::spawn(task.in_current_span().with_current_subscriber());
+        cube_ext::spawn(task);
 
         GroupedHashAggregateStream {
             schema,
@@ -945,7 +945,7 @@ impl HashAggregateStream {
                 compute_hash_aggregate(mode, schema_clone, aggr_expr, input).await;
             tx.send(result)
         };
-        tokio::spawn(task.in_current_span().with_current_subscriber());
+        cube_ext::spawn(task);
 
         HashAggregateStream {
             schema,

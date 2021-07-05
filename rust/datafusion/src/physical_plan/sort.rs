@@ -38,6 +38,7 @@ use arrow::record_batch::RecordBatch;
 use arrow::{array::ArrayRef, error::ArrowError};
 
 use super::{RecordBatchStream, SendableRecordBatchStream};
+use crate::cube_ext;
 use crate::error::{DataFusionError, Result};
 use crate::logical_plan::DFSchemaRef;
 use crate::physical_plan::expressions::PhysicalSortExpr;
@@ -249,7 +250,7 @@ impl SortStream {
         let (tx, rx) = futures::channel::oneshot::channel();
 
         let schema = input.schema();
-        tokio::spawn(async move {
+        cube_ext::spawn(async move {
             let schema = input.schema();
             let sorted_batch = common::collect(input)
                 .await

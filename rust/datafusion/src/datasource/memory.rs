@@ -34,6 +34,7 @@ use crate::physical_plan::common;
 use crate::physical_plan::memory::MemoryExec;
 use crate::physical_plan::ExecutionPlan;
 use crate::{
+    cube_ext,
     datasource::datasource::Statistics,
     physical_plan::{repartition::RepartitionExec, Partitioning},
 };
@@ -121,7 +122,7 @@ impl MemTable {
         let tasks = (0..partition_count)
             .map(|part_i| {
                 let exec = exec.clone();
-                tokio::spawn(async move {
+                cube_ext::spawn(async move {
                     let stream = exec.execute(part_i).await?;
                     common::collect(stream).await
                 })
