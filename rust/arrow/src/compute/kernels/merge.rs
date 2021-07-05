@@ -647,10 +647,7 @@ where
 #[cfg(test)]
 mod tests {
     use crate::array::{ArrayRef, UInt32Array, UInt64Array};
-    use crate::compute::kernels::if_op::if_primitive;
     use crate::compute::kernels::merge::{merge_join_indices, MergeJoinType};
-    use crate::compute::{is_not_null, take};
-    use crate::error::ArrowError;
     use std::sync::Arc;
 
     #[test]
