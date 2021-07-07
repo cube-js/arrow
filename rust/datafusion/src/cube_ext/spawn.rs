@@ -27,7 +27,14 @@ where
     T: Future + Send + 'static,
     T::Output: Send + 'static,
 {
-    tokio::spawn(task.in_current_span())
+    if let Some(s) = new_subtask_span() {
+        tokio::spawn(async move {
+            let _p = s.parent; // ensure parent stays alive.
+            task.instrument(s.child).await
+        })
+    } else {
+        tokio::spawn(task)
+    }
 }
 
 /// Propagates current span to blocking operation. See [spawn] for details.
@@ -36,13 +43,27 @@ where
     F: FnOnce() -> R + Send + 'static,
     R: Send + 'static,
 {
-    let span = tracing::Span::current();
-    if span.is_disabled() {
-        tokio::task::spawn_blocking(f)
-    } else {
+    if let Some(s) = new_subtask_span() {
         tokio::task::spawn_blocking(move || {
-            let _ = tracing::info_span!(parent: &span, "blocking task").enter();
-            f()
+            let _p = s.parent; // ensure parent stays alive.
+            s.child.in_scope(f)
         })
+    } else {
+        tokio::task::spawn_blocking(f)
     }
+}
+
+struct SpawnSpans {
+    parent: tracing::Span,
+    child: tracing::Span,
+}
+
+fn new_subtask_span() -> Option<SpawnSpans> {
+    let parent = tracing::Span::current();
+    if parent.is_disabled() {
+        return None;
+    }
+    // TODO: ensure this is always enabled.
+    let child = tracing::info_span!(parent: &parent, "subtask");
+    Some(SpawnSpans { parent, child })
 }
