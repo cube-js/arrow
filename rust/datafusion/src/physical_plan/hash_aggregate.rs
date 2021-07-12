@@ -1166,9 +1166,7 @@ fn create_builder(s: &ScalarValue) -> Box<dyn ArrayBuilder> {
             DataType::UInt16 => Box::new(ListBuilder::new(UInt16Builder::new(0))),
             DataType::UInt32 => Box::new(ListBuilder::new(UInt32Builder::new(0))),
             DataType::UInt64 => Box::new(ListBuilder::new(UInt64Builder::new(0))),
-            DataType::Utf8 => {
-                Box::new(ListBuilder::new(ListBuilder::new(StringBuilder::new(0))))
-            }
+            DataType::Utf8 => Box::new(ListBuilder::new(StringBuilder::new(0))),
             x => panic!("unexpected list type {}", x),
         },
         ScalarValue::Binary(_) => Box::new(BinaryBuilder::new(0)),
